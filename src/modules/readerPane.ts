@@ -165,11 +165,52 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
     titleRow.style.display = "flex";
     titleRow.style.justifyContent = "space-between";
     titleRow.style.alignItems = "center";
+    titleRow.style.gap = "8px";
+
+    const titleGroup = doc.createElement("div");
+    titleGroup.style.display = "flex";
+    titleGroup.style.alignItems = "center";
+    titleGroup.style.gap = "8px";
+    titleGroup.style.flex = "1";
 
     const title = doc.createElement("div");
     title.textContent = "Gemini Chat";
     title.style.fontWeight = "bold";
     title.style.fontSize = "13px";
+    title.style.whiteSpace = "nowrap";
+
+    const modelSelect = doc.createElement("select");
+    modelSelect.style.fontSize = "11px";
+    modelSelect.style.padding = "1px 4px";
+    modelSelect.style.border = "1px solid #ccc";
+    modelSelect.style.borderRadius = "4px";
+    modelSelect.style.maxWidth = "120px"; // Prevent it from taking too much space
+
+    const models = [
+      "gemini-3-pro-preview",
+      "gemini-2.5-flash",
+      "gemini-2.5-flash-lite",
+      "gemini-2.5-pro"
+    ];
+
+    const currentSettings = getSettings();
+    models.forEach(m => {
+      const opt = doc.createElement("option");
+      opt.value = m;
+      opt.textContent = m; // Shorten if needed?
+      if (m === currentSettings.model) {
+        opt.selected = true;
+      }
+      modelSelect.appendChild(opt);
+    });
+
+    modelSelect.addEventListener("change", () => {
+      const val = modelSelect.value;
+      Zotero.Prefs.set(config.prefsPrefix + ".model", val, true);
+    });
+
+    titleGroup.appendChild(title);
+    titleGroup.appendChild(modelSelect);
 
     const saveAllBtn = doc.createElement("button");
     saveAllBtn.textContent = "💾";
@@ -187,7 +228,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
       setTimeout(() => (saveAllBtn.textContent = "💾"), 2000);
     };
 
-    titleRow.appendChild(title);
+    titleRow.appendChild(titleGroup);
     titleRow.appendChild(saveAllBtn);
     header.appendChild(titleRow);
 
