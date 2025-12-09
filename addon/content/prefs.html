@@ -83,13 +83,18 @@
       <input id="api-key" type="password" placeholder="Your API key" />
     </div>
     <div class="field">
-      <label for="custom-prompts">Custom Prompts (JSON Array)</label>
-      <textarea
-        id="custom-prompts"
-        rows="5"
-        placeholder='[{"name": "Summarize", "prompt": "Summarize this paper."}]'
-        style="padding: 8px 10px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px; font-family: monospace; resize: vertical;"
-      ></textarea>
+      <label>Custom Prompts</label>
+      <div id="prompts-list" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
+        <!-- Prompts will be rendered here -->
+      </div>
+      
+      <div style="display: flex; gap: 8px; align-items: flex-start;">
+        <input id="new-prompt-name" type="text" placeholder="Name (e.g. Summarize)" style="width: 120px;" />
+        <input id="new-prompt-text" type="text" placeholder="Prompt content..." style="flex: 1;" />
+        <button id="add-prompt-btn" type="button" style="padding: 8px 12px;">Add</button>
+      </div>
+      <!-- Hidden input to store the actual JSON -->
+      <input id="custom-prompts" type="hidden" />
     </div>
     <div class="actions">
       <button id="test-btn" type="button">Test Gemini</button>

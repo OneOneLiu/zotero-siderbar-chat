@@ -17,7 +17,7 @@ export function getSettings() {
   };
 }
 
-export function buildEndpoint(settings: ReturnType<typeof getSettings>): string {
+export function buildEndpoint(settings: { apiBase: string; model: string; apiKey: string }): string {
   return `${settings.apiBase}/models/${settings.model}:generateContent?key=${settings.apiKey}`;
 }
 

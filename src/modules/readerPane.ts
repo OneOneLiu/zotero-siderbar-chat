@@ -24,7 +24,7 @@ function getMarkdown() {
       md.use(tm, {
         engine: katex,
         delimiters: "dollars",
-        katexOptions: { 
+        katexOptions: {
           macros: { "\\RR": "\\mathbb{R}" },
           output: "html", // Prevent MathML/HTML duplication
           throwOnError: false
@@ -95,7 +95,7 @@ export function registerSidebarButton(getPaneKey: () => string) {
       btn.className = "gemini-chat-jump";
       btn.textContent = "Gemini";
       btn.setAttribute("data-l10n-id", getLocaleID("sidebar-button"));
-      
+
       btn.title = "Open Gemini chat pane";
       btn.style.cssText =
         "border:1px solid transparent;border-radius:4px;padding:2px 6px;cursor:pointer;background:var(--color-field-bg, #ececec);";
@@ -119,7 +119,7 @@ export function registerSidebarButton(getPaneKey: () => string) {
 
 function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
   Zotero.debug(`[GeminiChat] renderChat called for item ${item?.id}`);
-  
+
   // Ensure markdown is initialized immediately to catch errors early
   // getMarkdown();
 
@@ -150,11 +150,11 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
     wrapper.style.gap = "8px";
     wrapper.style.padding = "8px";
     wrapper.style.boxSizing = "border-box";
-    wrapper.style.height = "100%"; 
+    wrapper.style.height = "100%";
     wrapper.style.userSelect = "text";
     wrapper.style.cursor = "auto";
     // @ts-ignore
-    wrapper.style.MozUserSelect = "text"; 
+    wrapper.style.MozUserSelect = "text";
 
     const header = doc.createElement("div");
     header.style.display = "flex";
@@ -179,12 +179,12 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
     saveAllBtn.style.cursor = "pointer";
     saveAllBtn.style.fontSize = "14px";
     saveAllBtn.style.padding = "0 4px";
-    
+
     saveAllBtn.onclick = async () => {
-        saveAllBtn.textContent = "...";
-        await saveFullSessionToNote(item, messages);
-        saveAllBtn.textContent = "✔";
-        setTimeout(() => (saveAllBtn.textContent = "💾"), 2000);
+      saveAllBtn.textContent = "...";
+      await saveFullSessionToNote(item, messages);
+      saveAllBtn.textContent = "✔";
+      setTimeout(() => (saveAllBtn.textContent = "💾"), 2000);
     };
 
     titleRow.appendChild(title);
@@ -201,47 +201,47 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
 
     // Custom Prompts Section
     const settings = getSettings();
-    let prompts: Array<{name: string, prompt: string}> = [];
+    let prompts: Array<{ name: string, prompt: string }> = [];
     try {
-        prompts = JSON.parse(settings.customPrompts);
+      prompts = JSON.parse(settings.customPrompts);
     } catch (e) {
-        Zotero.debug(`[GeminiChat] Failed to parse custom prompts: ${e}`);
+      Zotero.debug(`[GeminiChat] Failed to parse custom prompts: ${e}`);
     }
 
     if (prompts.length > 0 && Array.isArray(prompts)) {
-        const promptBar = doc.createElement("div");
-        promptBar.style.display = "flex";
-        promptBar.style.gap = "6px";
-        promptBar.style.overflowX = "auto";
-        promptBar.style.padding = "4px 0";
-        promptBar.style.marginBottom = "4px";
-        
-        // Hide scrollbar but keep functionality
-        promptBar.style.scrollbarWidth = "none"; 
-        
-        prompts.forEach(p => {
-            if (!p.name || !p.prompt) return;
-            const chip = doc.createElement("button");
-            chip.textContent = p.name;
-            chip.title = p.prompt;
-            chip.style.whiteSpace = "nowrap";
-            chip.style.padding = "2px 8px";
-            chip.style.fontSize = "11px";
-            chip.style.border = "1px solid var(--color-border, #ccc)";
-            chip.style.borderRadius = "12px";
-            chip.style.background = "var(--color-field-bg, #fff)";
-            chip.style.cursor = "pointer";
-            
-            chip.addEventListener("click", () => {
-                handleSend(p.prompt);
-            });
-            
-            promptBar.appendChild(chip);
+      const promptBar = doc.createElement("div");
+      promptBar.style.display = "flex";
+      promptBar.style.gap = "6px";
+      promptBar.style.overflowX = "auto";
+      promptBar.style.padding = "4px 0";
+      promptBar.style.marginBottom = "4px";
+
+      // Hide scrollbar but keep functionality
+      promptBar.style.scrollbarWidth = "none";
+
+      prompts.forEach(p => {
+        if (!p.name || !p.prompt) return;
+        const chip = doc.createElement("button");
+        chip.textContent = p.name;
+        chip.title = p.prompt;
+        chip.style.whiteSpace = "nowrap";
+        chip.style.padding = "2px 8px";
+        chip.style.fontSize = "11px";
+        chip.style.border = "1px solid var(--color-border, #ccc)";
+        chip.style.borderRadius = "12px";
+        chip.style.background = "var(--color-field-bg, #fff)";
+        chip.style.cursor = "pointer";
+
+        chip.addEventListener("click", () => {
+          handleSend(p.prompt);
         });
-        
-        if (promptBar.children.length > 0) {
-            header.appendChild(promptBar);
-        }
+
+        promptBar.appendChild(chip);
+      });
+
+      if (promptBar.children.length > 0) {
+        header.appendChild(promptBar);
+      }
     }
 
     const messageList = doc.createElement("div");
@@ -337,9 +337,9 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
             saveBtn.textContent = "✔";
             setTimeout(() => (saveBtn.textContent = "+"), 2000);
           };
-          
+
           bubble.appendChild(saveBtn);
-          
+
           // bubble.addEventListener("mouseenter", () => { saveBtn.style.opacity = "1"; });
           // bubble.addEventListener("mouseleave", () => { saveBtn.style.opacity = "0"; });
         }
@@ -369,15 +369,17 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
       sendBtn.textContent = busy ? "Asking..." : "Send";
     };
 
-    const handleSend = async () => {
-      const text = input.value.trim();
+    const handleSend = async (overrideText?: string) => {
+      const text = (typeof overrideText === "string" ? overrideText : input.value).trim();
       if (!text || addon.isBusy(itemKey)) return;
       addon.pushMessage(itemKey, {
         role: "user",
         text,
         at: Date.now(),
       });
-      input.value = "";
+      if (!overrideText) {
+        input.value = "";
+      }
       renderMessages();
 
       const settings = getSettings();
@@ -395,10 +397,10 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
       try {
         const questionParts = buildQuestionParts(text, item);
         const pdfPart = await getPdfContextPart(item);
-        
+
         const payload: any[] = [];
         if (pdfPart) {
-            payload.push({ inlineData: pdfPart });
+          payload.push({ inlineData: pdfPart });
         }
         payload.push({ text: questionParts });
 
@@ -420,7 +422,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
       }
     };
 
-    sendBtn.addEventListener("click", handleSend);
+    sendBtn.addEventListener("click", () => handleSend());
     input.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey) {
         ev.preventDefault();
@@ -439,7 +441,7 @@ function buildQuestionParts(question: string, item?: Zotero.Item): string {
   let context = "";
   if (item?.getField) {
     const title = item.getField("title") || "";
-    context = `Paper title: ${title}\n`; 
+    context = `Paper title: ${title}\n`;
   }
   return `${context}\nQuestion: ${question}`;
 }
@@ -452,16 +454,16 @@ async function saveFullSessionToNote(item: Zotero.Item, messages: ChatMessage[])
   note.parentID = parentID;
 
   let html = `<h2>Gemini Chat Session (${new Date().toLocaleString()})</h2>`;
-  
+
   messages.forEach(m => {
     const role = m.role === "user" ? "User" : (m.role === "model" ? "Gemini" : "System");
-    
+
     // Use getMarkdown().render for formatting
     let content = "";
     try {
-        content = getMarkdown().render(m.text);
+      content = getMarkdown().render(m.text);
     } catch (e) {
-        content = m.text; // Fallback
+      content = m.text; // Fallback
     }
 
     html += `<p><strong>${role}:</strong></p>
@@ -500,76 +502,76 @@ ${aHtml}`);
 }
 
 async function getPdfContextPart(item: Zotero.Item): Promise<{ mimeType: string; data: string } | null> {
-    const attachment = getBestAttachment(item);
-    if (!attachment) return null;
-    
-    const path = await attachment.getFilePathAsync();
-    if (!path) return null;
+  const attachment = getBestAttachment(item);
+  if (!attachment) return null;
 
-    try {
-        const data = await getFileData(path);
-        if (data) {
-            return {
-                mimeType: "application/pdf",
-                data
-            };
-        }
-    } catch (e) {
-        Zotero.debug(`[GeminiChat] Failed to read PDF: ${e}`);
+  const path = await attachment.getFilePathAsync();
+  if (!path) return null;
+
+  try {
+    const data = await getFileData(path);
+    if (data) {
+      return {
+        mimeType: "application/pdf",
+        data
+      };
     }
-    return null;
+  } catch (e) {
+    Zotero.debug(`[GeminiChat] Failed to read PDF: ${e}`);
+  }
+  return null;
 }
 
 function getBestAttachment(item: Zotero.Item): Zotero.Item | null {
-    if (item.isAttachment()) return item;
-    if (item.isRegularItem()) {
-        const attachmentIDs = item.getAttachments();
-        for (const id of attachmentIDs) {
-            const att = Zotero.Items.get(id);
-            if (att && !att.isNote() && att.attachmentContentType === 'application/pdf') {
-                return att;
-            }
-        }
+  if (item.isAttachment()) return item;
+  if (item.isRegularItem()) {
+    const attachmentIDs = item.getAttachments();
+    for (const id of attachmentIDs) {
+      const att = Zotero.Items.get(id);
+      if (att && !att.isNote() && att.attachmentContentType === 'application/pdf') {
+        return att;
+      }
     }
-    return null;
+  }
+  return null;
 }
 
 async function getFileData(path: string): Promise<string | null> {
-    if (typeof IOUtils !== "undefined") {
-      try {
-        const bytes = await IOUtils.read(path);
-        return arrayBufferToBase64(bytes);
-      } catch (e) {
-        Zotero.debug(`[GeminiChat] IOUtils read failed: ${e}`);
-      }
+  if (typeof IOUtils !== "undefined") {
+    try {
+      const bytes = await IOUtils.read(path);
+      return arrayBufferToBase64(bytes);
+    } catch (e) {
+      Zotero.debug(`[GeminiChat] IOUtils read failed: ${e}`);
     }
-    
-    // @ts-ignore
-    if (typeof OS !== "undefined" && OS.File) {
-      try {
-        // @ts-ignore
-        const bytes = await OS.File.read(path);
-        return arrayBufferToBase64(bytes);
-      } catch (e) {
-        Zotero.debug(`[GeminiChat] OS.File read failed: ${e}`);
-      }
+  }
+
+  // @ts-ignore
+  if (typeof OS !== "undefined" && OS.File) {
+    try {
+      // @ts-ignore
+      const bytes = await OS.File.read(path);
+      return arrayBufferToBase64(bytes);
+    } catch (e) {
+      Zotero.debug(`[GeminiChat] OS.File read failed: ${e}`);
     }
-  
-    return null;
+  }
+
+  return null;
 }
-  
+
 function arrayBufferToBase64(buffer: Uint8Array | ArrayBuffer | any): string {
-    const bytes = new Uint8Array(buffer);
-    let binary = "";
-    const len = bytes.byteLength;
-    const chunkSize = 8192;
-    for (let i = 0; i < len; i += chunkSize) {
-        const end = Math.min(i + chunkSize, len);
-        const chunk = bytes.subarray(i, end);
-        // @ts-ignore
-        binary += String.fromCharCode.apply(null, chunk);
-    }
-    return btoa(binary);
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const len = bytes.byteLength;
+  const chunkSize = 8192;
+  for (let i = 0; i < len; i += chunkSize) {
+    const end = Math.min(i + chunkSize, len);
+    const chunk = bytes.subarray(i, end);
+    // @ts-ignore
+    binary += String.fromCharCode.apply(null, chunk);
+  }
+  return btoa(binary);
 }
 
 async function callGemini(settings: ReturnType<typeof getSettings>, parts: any[]): Promise<string> {
@@ -586,9 +588,9 @@ async function callGemini(settings: ReturnType<typeof getSettings>, parts: any[]
   let timer: any;
 
   if (typeof AbortController !== "undefined") {
-      const controller = new AbortController();
-      timer = setTimeout(() => controller.abort(), 60000);
-      signal = controller.signal;
+    const controller = new AbortController();
+    timer = setTimeout(() => controller.abort(), 60000);
+    signal = controller.signal;
   }
 
   try {

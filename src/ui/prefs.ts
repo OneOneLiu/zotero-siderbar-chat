@@ -27,7 +27,12 @@ function initForm(Zotero: any) {
   const apiBase = getInput("api-base");
   const model = getInput("model");
   const apiKey = getInput("api-key");
-  const customPrompts = getInput("custom-prompts");
+  const customPromptsInput = getInput("custom-prompts");
+  const promptsList = document.getElementById("prompts-list") as HTMLDivElement;
+  const newPromptName = document.getElementById("new-prompt-name") as HTMLInputElement;
+  const newPromptText = document.getElementById("new-prompt-text") as HTMLInputElement;
+  const addPromptBtn = document.getElementById("add-prompt-btn") as HTMLButtonElement;
+
   const status = document.getElementById("test-status") as HTMLDivElement;
   const testBtn = document.getElementById("test-btn") as HTMLButtonElement;
 
@@ -38,16 +43,90 @@ function initForm(Zotero: any) {
     (Zotero.Prefs.get(getPrefKey("model"), true) as string) ||
     "gemini-1.5-flash-latest";
   apiKey.value = (Zotero.Prefs.get(getPrefKey("apiKey"), true) as string) || "";
-  customPrompts.value = (Zotero.Prefs.get(getPrefKey("customPrompts"), true) as string) || "[]";
+  
+  let prompts: Array<{name: string, prompt: string}> = [];
+  try {
+    prompts = JSON.parse((Zotero.Prefs.get(getPrefKey("customPrompts"), true) as string) || "[]");
+  } catch (e) {
+    prompts = [];
+  }
+  customPromptsInput.value = JSON.stringify(prompts);
 
   const save = (id: string, value: string) => {
     Zotero.Prefs.set(getPrefKey(id), value, true);
   };
 
+  const renderPrompts = () => {
+    promptsList.innerHTML = "";
+    prompts.forEach((p, index) => {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.gap = "8px";
+      row.style.alignItems = "center";
+      row.style.background = "#fff";
+      row.style.padding = "6px";
+      row.style.borderRadius = "6px";
+      row.style.border = "1px solid #d0d7de";
+
+      const name = document.createElement("span");
+      name.textContent = p.name;
+      name.style.fontWeight = "bold";
+      name.style.width = "120px";
+      name.style.overflow = "hidden";
+      name.style.textOverflow = "ellipsis";
+      name.style.whiteSpace = "nowrap";
+
+      const text = document.createElement("span");
+      text.textContent = p.prompt;
+      text.style.flex = "1";
+      text.style.overflow = "hidden";
+      text.style.textOverflow = "ellipsis";
+      text.style.whiteSpace = "nowrap";
+      text.style.color = "#555";
+
+      const delBtn = document.createElement("button");
+      delBtn.textContent = "×";
+      delBtn.title = "Remove";
+      delBtn.style.padding = "2px 6px";
+      delBtn.style.color = "#cf222e";
+      delBtn.style.borderColor = "rgba(27, 31, 36, 0.15)";
+      
+      delBtn.onclick = () => {
+        prompts.splice(index, 1);
+        updatePrompts();
+      };
+
+      row.appendChild(name);
+      row.appendChild(text);
+      row.appendChild(delBtn);
+      promptsList.appendChild(row);
+    });
+  };
+
+  const updatePrompts = () => {
+    const json = JSON.stringify(prompts);
+    customPromptsInput.value = json;
+    save("customPrompts", json);
+    renderPrompts();
+  };
+
+  addPromptBtn.addEventListener("click", () => {
+    const name = newPromptName.value.trim();
+    const prompt = newPromptText.value.trim();
+    if (!name || !prompt) return;
+    
+    prompts.push({ name, prompt });
+    newPromptName.value = "";
+    newPromptText.value = "";
+    updatePrompts();
+  });
+
+  renderPrompts();
+
   apiBase.addEventListener("change", () => save("apiBase", apiBase.value.trim()));
   model.addEventListener("change", () => save("model", model.value.trim()));
   apiKey.addEventListener("change", () => save("apiKey", apiKey.value.trim()));
-  customPrompts.addEventListener("change", () => save("customPrompts", customPrompts.value.trim()));
+  // customPrompts listener removed as it's handled by updatePrompts
 
   testBtn.addEventListener("click", async () => {
     status.textContent = "Testing...";
