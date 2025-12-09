@@ -1,7 +1,7 @@
 {
   "name": "zotero-gemini-chat",
   "type": "module",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A minimal Zotero reader sidebar chat for Gemini models.",
   "homepage": "https://example.com/zotero-gemini-chat",
   "author": "Your Name",

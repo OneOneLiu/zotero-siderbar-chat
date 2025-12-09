@@ -395,16 +395,34 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
 
       setBusy(true);
       try {
-        const questionParts = buildQuestionParts(text, item);
+        const history = addon.getSession(itemKey);
         const pdfPart = await getPdfContextPart(item);
 
-        const payload: any[] = [];
-        if (pdfPart) {
-          payload.push({ inlineData: pdfPart });
-        }
-        payload.push({ text: questionParts });
+        // Build full conversation history
+        const contents = history.map((msg, index) => {
+          const parts: any[] = [{ text: msg.text }];
 
-        const reply = await callGemini(settings, payload);
+          // Inject context into the VERY FIRST message (if it's from user)
+          if (index === 0 && msg.role === "user") {
+            // Add PDF data
+            if (pdfPart) {
+              parts.unshift({ inlineData: pdfPart });
+            }
+            // Add Title context
+            if (item?.getField) {
+              const title = item.getField("title") || "";
+              // Prepend title to the text part
+              parts[parts.length - 1].text = `Paper title: ${title}\n\n${parts[parts.length - 1].text}`;
+            }
+          }
+
+          return {
+            role: msg.role,
+            parts: parts
+          };
+        });
+
+        const reply = await callGemini(settings, contents);
         addon.pushMessage(itemKey, {
           role: "model",
           text: reply,
@@ -437,14 +455,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
   }
 }
 
-function buildQuestionParts(question: string, item?: Zotero.Item): string {
-  let context = "";
-  if (item?.getField) {
-    const title = item.getField("title") || "";
-    context = `Paper title: ${title}\n`;
-  }
-  return `${context}\nQuestion: ${question}`;
-}
+// buildQuestionParts removed as it is now integrated into the history construction
 
 async function saveFullSessionToNote(item: Zotero.Item, messages: ChatMessage[]) {
   const parentID = item.isAttachment() ? item.parentID : item.id;
@@ -574,14 +585,10 @@ function arrayBufferToBase64(buffer: Uint8Array | ArrayBuffer | any): string {
   return btoa(binary);
 }
 
-async function callGemini(settings: ReturnType<typeof getSettings>, parts: any[]): Promise<string> {
+async function callGemini(settings: ReturnType<typeof getSettings>, contents: any[]): Promise<string> {
   const endpoint = buildEndpoint(settings);
   const payload = {
-    contents: [
-      {
-        parts: parts,
-      },
-    ],
+    contents: contents,
   };
 
   let signal: AbortSignal | undefined;
