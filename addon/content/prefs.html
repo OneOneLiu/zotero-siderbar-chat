@@ -85,7 +85,6 @@
   <div class="field">
     <label for="model">Model</label>
     <select id="model">
-      <option value="gemini-1.5-flash-latest">gemini-1.5-flash-latest</option>
       <option value="gemini-3-pro-preview">gemini-3-pro-preview</option>
       <option value="gemini-2.5-flash">gemini-2.5-flash</option>
       <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
@@ -106,6 +105,7 @@
       <input id="new-prompt-name" type="text" placeholder="Name (e.g. Summarize)" style="width: 120px;" />
       <input id="new-prompt-text" type="text" placeholder="Prompt content..." style="flex: 1;" />
       <button id="add-prompt-btn" type="button" style="padding: 8px 12px;">Add</button>
+      <button id="cancel-edit-btn" type="button" style="padding: 8px 12px; display: none;">Cancel</button>
     </div>
     <!-- Hidden input to store the actual JSON -->
     <input id="custom-prompts" type="hidden" />

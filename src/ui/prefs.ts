@@ -32,6 +32,7 @@ function initForm(Zotero: any) {
   const newPromptName = document.getElementById("new-prompt-name") as HTMLInputElement;
   const newPromptText = document.getElementById("new-prompt-text") as HTMLInputElement;
   const addPromptBtn = document.getElementById("add-prompt-btn") as HTMLButtonElement;
+  const cancelEditBtn = document.getElementById("cancel-edit-btn") as HTMLButtonElement;
 
   const status = document.getElementById("test-status") as HTMLDivElement;
   const testBtn = document.getElementById("test-btn") as HTMLButtonElement;
@@ -52,8 +53,18 @@ function initForm(Zotero: any) {
   }
   customPromptsInput.value = JSON.stringify(prompts);
 
+  let editingIndex = -1;
+
   const save = (id: string, value: string) => {
     Zotero.Prefs.set(getPrefKey(id), value, true);
+  };
+
+  const resetForm = () => {
+    editingIndex = -1;
+    newPromptName.value = "";
+    newPromptText.value = "";
+    addPromptBtn.textContent = "Add";
+    cancelEditBtn.style.display = "none";
   };
 
   const renderPrompts = () => {
@@ -84,6 +95,24 @@ function initForm(Zotero: any) {
       text.style.whiteSpace = "nowrap";
       text.style.color = "#555";
 
+      const actionsDiv = document.createElement("div");
+      actionsDiv.style.display = "flex";
+      actionsDiv.style.gap = "4px";
+
+      const editBtn = document.createElement("button");
+      editBtn.textContent = "✎";
+      editBtn.title = "Edit";
+      editBtn.style.padding = "2px 6px";
+      editBtn.style.color = "#0969da";
+      editBtn.style.borderColor = "rgba(27, 31, 36, 0.15)";
+      editBtn.onclick = () => {
+        editingIndex = index;
+        newPromptName.value = p.name;
+        newPromptText.value = p.prompt;
+        addPromptBtn.textContent = "Update";
+        cancelEditBtn.style.display = "inline-block";
+      };
+
       const delBtn = document.createElement("button");
       delBtn.textContent = "×";
       delBtn.title = "Remove";
@@ -92,13 +121,20 @@ function initForm(Zotero: any) {
       delBtn.style.borderColor = "rgba(27, 31, 36, 0.15)";
 
       delBtn.onclick = () => {
+        if (editingIndex === index) {
+          resetForm();
+        } else if (editingIndex > index) {
+          editingIndex--;
+        }
         prompts.splice(index, 1);
         updatePrompts();
       };
 
+      actionsDiv.appendChild(editBtn);
+      actionsDiv.appendChild(delBtn);
       row.appendChild(name);
       row.appendChild(text);
-      row.appendChild(delBtn);
+      row.appendChild(actionsDiv);
       promptsList.appendChild(row);
     });
   };
@@ -115,10 +151,19 @@ function initForm(Zotero: any) {
     const prompt = newPromptText.value.trim();
     if (!name || !prompt) return;
 
-    prompts.push({ name, prompt });
-    newPromptName.value = "";
-    newPromptText.value = "";
+    if (editingIndex >= 0 && editingIndex < prompts.length) {
+      prompts[editingIndex] = { name, prompt };
+      resetForm();
+    } else {
+      prompts.push({ name, prompt });
+      newPromptName.value = "";
+      newPromptText.value = "";
+    }
     updatePrompts();
+  });
+
+  cancelEditBtn.addEventListener("click", () => {
+    resetForm();
   });
 
   renderPrompts();
