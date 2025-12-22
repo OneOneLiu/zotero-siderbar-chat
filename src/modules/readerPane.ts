@@ -178,6 +178,8 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
             background-color: var(--gemini-bg-app);
             color: var(--gemini-text-primary);
             font-size: 14px;
+            width: 100%;
+            box-sizing: border-box;
           }
           .gemini-chat-header {
             padding: 12px 16px;
@@ -200,6 +202,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
             align-items: center;
             gap: 8px;
             flex: 1;
+            min-width: 0; /* Allow shrinking */
           }
           .gemini-chat-title {
             font-weight: 600;
@@ -207,6 +210,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
             background: linear-gradient(135deg, #007AFF, #5856D6);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
+            flex-shrink: 0;
           }
           .gemini-chat-model-select {
             font-size: 12px;
@@ -218,6 +222,8 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
             color: var(--gemini-text-primary);
             cursor: pointer;
             transition: all 0.2s;
+            flex-shrink: 1; /* Allow shrinking */
+            min-width: 0;
           }
           .gemini-chat-model-select:hover {
             border-color: #007AFF;
@@ -231,16 +237,13 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
             padding-left: 2px;
           }
           
-          /* Prompts Scrollbar */
+          /* Prompts Area */
           .gemini-chat-prompts {
             display: flex;
             gap: 8px;
-            overflow-x: auto;
+            flex-wrap: wrap; /* Allow wrapping */
             padding: 2px 0 6px 0;
-            scrollbar-width: none;
-            -ms-overflow-style: none;
           }
-          .gemini-chat-prompts::-webkit-scrollbar { display: none; }
 
           .gemini-chat-prompt-chip {
             white-space: nowrap;
