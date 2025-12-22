@@ -4,8 +4,9 @@ import tm from "markdown-it-texmath";
 import katex from "katex";
 import { config } from "../../package.json";
 import Addon, { ChatMessage } from "../addon";
-import { buildEndpoint, getSettings } from "./settings";
+import { getSettings, buildEndpoint } from "./settings";
 import { getLocaleID } from "../utils/locale";
+import { AVAILABLE_MODELS } from "../constants";
 
 Zotero.debug("[GeminiChat] Loading readerPane module...");
 
@@ -484,12 +485,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
     const modelSelect = createElement("select") as HTMLSelectElement;
     modelSelect.setAttribute("class", "gemini-chat-model-select");
 
-    const models = [
-      "gemini-3-pro-preview",
-      "gemini-2.5-flash",
-      "gemini-2.5-flash-lite",
-      "gemini-2.5-pro"
-    ];
+    const models = AVAILABLE_MODELS;
 
     let currentSettings: any = {};
     try {

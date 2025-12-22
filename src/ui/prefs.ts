@@ -1,5 +1,6 @@
 import { config } from "../../package.json";
 import { buildEndpoint } from "../modules/settings";
+import { AVAILABLE_MODELS } from "../constants";
 
 function getZotero(): any {
   const w = window as any;
@@ -40,9 +41,21 @@ function initForm(Zotero: any) {
   apiBase.value =
     (Zotero.Prefs.get(getPrefKey("apiBase"), true) as string) ||
     "https://generativelanguage.googleapis.com/v1beta";
+  "https://generativelanguage.googleapis.com/v1beta";
+
+  // Populate models
+  model.innerHTML = "";
+  AVAILABLE_MODELS.forEach(m => {
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = m;
+    model.appendChild(opt);
+  });
+
   model.value =
     (Zotero.Prefs.get(getPrefKey("model"), true) as string) ||
     "gemini-1.5-flash-latest";
+
   apiKey.value = (Zotero.Prefs.get(getPrefKey("apiKey"), true) as string) || "";
 
   let prompts: Array<{ name: string, prompt: string }> = [];
