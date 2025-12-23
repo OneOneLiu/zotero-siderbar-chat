@@ -153,6 +153,13 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
     // Safely get head
     const head = doc.head || doc.getElementsByTagName("head")[0] || doc.documentElement;
 
+    let currentSettings: any = {};
+    try {
+      currentSettings = getSettings();
+    } catch (e) {
+      Zotero.debug(`[GeminiChat] Error getting settings: ${e}`);
+    }
+
     // Inject CSS
     try {
       if (!doc.getElementById("gemini-chat-styles")) {
@@ -161,7 +168,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
         style.textContent = `
           :root {
             --gemini-bg-app: #f5f5f7; /* iOS-like background */
-            --gemini-bg-header: rgba(255, 255, 255, 0.95);
+            --gemini-bg-header: rgba(245, 245, 247, 0.95); /* Match app bg */
             --gemini-bg-bubble-user: #007AFF;
             --gemini-bg-bubble-model: #ffffff;
             --gemini-text-primary: #1d1d1f;
@@ -173,7 +180,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
           .gemini-chat-wrapper {
             display: flex;
             flex-direction: column;
-            height: 100%;
+            height: ${currentSettings.chatHeight || 500}px;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background-color: var(--gemini-bg-app);
             color: var(--gemini-text-primary);
@@ -184,7 +191,6 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
           .gemini-chat-header {
             padding: 12px 16px;
             background: var(--gemini-bg-header);
-            backdrop-filter: blur(10px);
             border-bottom: 1px solid var(--gemini-border-light);
             display: flex;
             flex-direction: column;
@@ -519,13 +525,6 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
     modelSelect.setAttribute("class", "gemini-chat-model-select");
 
     const models = AVAILABLE_MODELS;
-
-    let currentSettings: any = {};
-    try {
-      currentSettings = getSettings();
-    } catch (e) {
-      Zotero.debug(`[GeminiChat] Error getting settings: ${e}`);
-    }
 
     models.forEach(m => {
       const opt = createElement("option") as HTMLOptionElement;

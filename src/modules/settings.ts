@@ -14,6 +14,7 @@ export function getSettings() {
       "gemini-1.5-flash-latest",
     apiKey: (Zotero.Prefs.get(getPrefKey("apiKey"), true) as string) || "",
     customPrompts: (Zotero.Prefs.get(getPrefKey("customPrompts"), true) as string) || "[]",
+    chatHeight: parseInt((Zotero.Prefs.get(getPrefKey("chatHeight"), true) as string) || "500", 10),
   };
 }
 

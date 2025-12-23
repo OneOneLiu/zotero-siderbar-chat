@@ -28,6 +28,7 @@ function initForm(Zotero: any) {
   const apiBase = getInput("api-base");
   const model = getInput("model");
   const apiKey = getInput("api-key");
+  const chatHeight = getInput("chat-height");
   const customPromptsInput = getInput("custom-prompts");
   const promptsList = document.getElementById("prompts-list") as HTMLDivElement;
   const newPromptName = document.getElementById("new-prompt-name") as HTMLInputElement;
@@ -57,6 +58,7 @@ function initForm(Zotero: any) {
     "gemini-1.5-flash-latest";
 
   apiKey.value = (Zotero.Prefs.get(getPrefKey("apiKey"), true) as string) || "";
+  chatHeight.value = (Zotero.Prefs.get(getPrefKey("chatHeight"), true) as string) || "500";
 
   let prompts: Array<{ name: string, prompt: string }> = [];
   try {
@@ -184,6 +186,7 @@ function initForm(Zotero: any) {
   apiBase.addEventListener("change", () => save("apiBase", apiBase.value.trim()));
   model.addEventListener("change", () => save("model", model.value.trim()));
   apiKey.addEventListener("change", () => save("apiKey", apiKey.value.trim()));
+  chatHeight.addEventListener("change", () => save("chatHeight", chatHeight.value.trim()));
   // customPrompts listener removed as it's handled by updatePrompts
 
   testBtn.addEventListener("click", async () => {
