@@ -453,6 +453,33 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
            }
            .gemini-chat-bubble.model .gemini-chat-meta { color: #999; }
            .gemini-chat-bubble.user .gemini-chat-meta { color: rgba(255,255,255,0.8); }
+
+          /* Selection Toolbar */
+          .gemini-chat-selection-toolbar {
+            position: fixed;
+            z-index: 1000;
+            background: #333;
+            border-radius: 4px;
+            padding: 4px;
+            display: flex;
+            gap: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            animation: gemini-chat-fade-in 0.2s ease-out;
+          }
+          .gemini-chat-format-btn {
+            background: transparent;
+            border: none;
+            color: white;
+            padding: 4px 8px;
+            cursor: pointer;
+            border-radius: 2px;
+            font-size: 12px;
+            font-weight: 500;
+          }
+          .gemini-chat-format-btn:hover {
+            background: rgba(255,255,255,0.2);
+          }
+          @keyframes gemini-chat-fade-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
         `;
         head.appendChild(style);
       }
@@ -580,6 +607,128 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
     // --- Messages ---
     const messageList = createElement("div");
     messageList.setAttribute("class", "gemini-chat-messages");
+
+    // --- Interaction Logic (Selection & Formatting) ---
+    let selectionToolbar: HTMLElement | null = null;
+
+    const removeToolbar = () => {
+      if (selectionToolbar) {
+        selectionToolbar.remove();
+        selectionToolbar = null;
+      }
+    };
+
+    const applyFormat = (format: 'highlight' | 'red' | 'bold') => {
+      const selection = doc.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+
+      const range = selection.getRangeAt(0);
+      const span = createElement(format === 'bold' ? 'strong' : 'span');
+
+      if (format === 'highlight') {
+        span.style.backgroundColor = '#ffeba6'; // Yellow highlight
+        span.style.color = 'black';
+        span.style.padding = '0 2px';
+        span.style.borderRadius = '2px';
+      } else if (format === 'red') {
+        span.style.color = '#d93025'; // Red text
+      }
+
+      try {
+        range.surroundContents(span);
+        selection.removeAllRanges();
+        removeToolbar();
+
+        // Persist changes
+        // Find which message bubble was modified
+        let current = span.parentElement;
+        while (current && !current.classList.contains("gemini-chat-bubble")) {
+          current = current.parentElement;
+        }
+
+        if (current) {
+          // Identify the message index by finding the bubble in the list
+          const bubbles = Array.from(messageList.getElementsByClassName("gemini-chat-bubble"));
+          const index = bubbles.indexOf(current);
+          if (index !== -1 && messages[index]) {
+            // Find content node (the generic div wrapping the markdown)
+            let contentNode = span.parentElement;
+            while (contentNode && contentNode.parentElement !== current) {
+              contentNode = contentNode.parentElement;
+            }
+
+            if (contentNode) {
+              // Update the message text with the new HTML
+              messages[index].text = contentNode.innerHTML;
+            }
+          }
+        }
+
+      } catch (e) {
+        Zotero.debug(`[GeminiChat] Apply format error: ${e}`);
+      }
+    };
+
+    messageList.addEventListener("mouseup", (e) => {
+      // Small delay to let selection settle
+      setTimeout(() => {
+        const selection = doc.getSelection();
+        if (!selection || selection.isCollapsed) {
+          removeToolbar();
+          return;
+        }
+
+        // Check if selection is inside a bubble
+        let node = selection.anchorNode;
+        let insideBubble = false;
+        while (node) {
+          if (node.nodeType === 1 && (node as Element).classList.contains("gemini-chat-bubble")) {
+            insideBubble = true;
+            break;
+          }
+          node = node.parentNode;
+        }
+
+        if (!insideBubble) {
+          removeToolbar();
+          return;
+        }
+
+        // Show toolbar
+        removeToolbar();
+        selectionToolbar = createElement("div");
+        selectionToolbar.className = "gemini-chat-selection-toolbar";
+
+        const btnHighlight = createElement("button");
+        btnHighlight.className = "gemini-chat-format-btn";
+        btnHighlight.innerHTML = "🖊️ High";
+        btnHighlight.onclick = () => applyFormat('highlight');
+
+        const btnRed = createElement("button");
+        btnRed.className = "gemini-chat-format-btn";
+        btnRed.innerHTML = "🔴 Red";
+        btnRed.onclick = () => applyFormat('red');
+
+        const btnBold = createElement("button");
+        btnBold.className = "gemini-chat-format-btn";
+        btnBold.innerHTML = "<b>B</b>";
+        btnBold.onclick = () => applyFormat('bold');
+
+        selectionToolbar.appendChild(btnHighlight);
+        selectionToolbar.appendChild(btnRed);
+        selectionToolbar.appendChild(btnBold);
+
+        body.appendChild(selectionToolbar); // Append to body to be fixed/absolute
+
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+
+        // Position above selection
+        const toolbarHeight = 40;
+        selectionToolbar.style.top = (rect.top - toolbarHeight) + "px";
+        selectionToolbar.style.left = rect.left + "px";
+      }, 10);
+    });
 
     // --- Input ---
     const inputArea = createElement("div");
