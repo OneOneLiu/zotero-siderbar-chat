@@ -9,6 +9,11 @@ export type ChatMessage = {
   meta?: {
     duration?: number;
   };
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
 };
 
 class Addon {

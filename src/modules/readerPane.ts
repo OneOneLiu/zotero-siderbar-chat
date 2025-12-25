@@ -895,10 +895,25 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
           bubble.textContent = m.text;
         }
 
-        if (m.meta && m.meta.duration) {
+        if ((m.meta && m.meta.duration) || m.usage) {
           const meta = createElement("div");
           meta.setAttribute("class", "gemini-chat-meta");
-          meta.textContent = `${(m.meta.duration / 1000).toFixed(1)}s`;
+          if (m.usage) meta.style.cursor = "help";
+
+          let metaText = "";
+          if (m.meta && m.meta.duration) {
+            metaText += `${(m.meta.duration / 1000).toFixed(1)}s`;
+          }
+          if (m.usage) {
+            if (metaText) metaText += " | ";
+            // Display as: Prompt / Output (Total)
+            // e.g. 150 / 50 (200 tks)
+            metaText += `${m.usage.promptTokens} / ${m.usage.completionTokens} tks`;
+            const tooltip = `Total: ${m.usage.totalTokens}\nPrompt: ${m.usage.promptTokens}\nOutput: ${m.usage.completionTokens}`;
+            meta.setAttribute("title", tooltip);
+          }
+
+          meta.textContent = metaText;
           bubble.appendChild(meta);
         }
 
@@ -1179,8 +1194,16 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
         let accumulatedText = "";
 
         for await (const chunk of callGeminiStream(settings, contents)) {
-          accumulatedText += chunk;
-          modelMsg.text = accumulatedText;
+          if (typeof chunk === "string") {
+            accumulatedText += chunk;
+            modelMsg.text = accumulatedText;
+          } else if (typeof chunk === "object" && chunk.usage) {
+            modelMsg.usage = {
+              promptTokens: chunk.usage.promptTokenCount,
+              completionTokens: chunk.usage.candidatesTokenCount,
+              totalTokens: chunk.usage.totalTokenCount
+            };
+          }
           renderMessages();
         }
 
@@ -1455,7 +1478,7 @@ function arrayBufferToBase64(buffer: Uint8Array | ArrayBuffer | any): string {
   return btoa(binary);
 }
 
-async function* callGeminiStream(settings: ReturnType<typeof getSettings>, contents: any[]): AsyncGenerator<string, void, unknown> {
+async function* callGeminiStream(settings: ReturnType<typeof getSettings>, contents: any[]): AsyncGenerator<string | { usage: any }, void, unknown> {
   // Use stream=true
   const endpoint = buildEndpoint(settings, true);
   const payload = { contents };
@@ -1558,6 +1581,10 @@ async function* callGeminiStream(settings: ReturnType<typeof getSettings>, conte
             const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
             if (text) {
               yield text;
+            }
+            // Extract usage metadata
+            if (parsed.usageMetadata) {
+              yield { usage: parsed.usageMetadata };
             }
           } catch (e) {
             // ignore parse error, likely not a full object yet or just comma
