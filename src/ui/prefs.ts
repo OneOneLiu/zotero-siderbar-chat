@@ -1,5 +1,5 @@
 import { config } from "../../package.json";
-import { PROVIDERS, GEMINI_MODELS, DEEPSEEK_MODELS } from "../constants";
+import { PROVIDERS, GEMINI_MODELS, DEEPSEEK_MODELS, DOUBAO_MODELS } from "../constants";
 import { getProvider } from "../providers";
 
 function getZotero(): any {
@@ -13,13 +13,13 @@ function getZotero(): any {
 }
 
 function getPrefKey(key: string) {
-  return `${config.prefsPrefix}.${key} `;
+  return `${config.prefsPrefix}.${key}`;
 }
 
 function getInput(id: string): HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement {
   const el = document.getElementById(id);
   if (!el || (!(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement) && !(el instanceof HTMLSelectElement))) {
-    throw new Error(`Missing input ${id} `);
+    throw new Error(`Missing input ${id}`);
   }
   return el;
 }
@@ -62,6 +62,8 @@ function initForm(Zotero: any) {
       models = GEMINI_MODELS;
     } else if (provider === "deepseek") {
       models = DEEPSEEK_MODELS;
+    } else if (provider === "doubao") {
+      models = DOUBAO_MODELS;
     }
 
     // Add model options
@@ -126,15 +128,24 @@ function initForm(Zotero: any) {
 
         if (!isInitialLoad) {
           // Reset to first model when switching
-          const defaultModel = selectedProvider === "gemini" ? "gemini-1.5-flash-latest" : "deepseek-chat";
+          const defaultModel = selectedProvider === "gemini"
+            ? "gemini-1.5-flash-latest"
+            : selectedProvider === "deepseek"
+              ? "deepseek-chat"
+              : "doubao-seed-1-6-flash-250615";
           modelSelect.value = defaultModel;
           save("model", defaultModel);
         } else {
-          modelSelect.value = savedModel || (selectedProvider === "gemini" ? "gemini-1.5-flash-latest" : "deepseek-chat");
+          const defaultModel = selectedProvider === "gemini"
+            ? "gemini-1.5-flash-latest"
+            : selectedProvider === "deepseek"
+              ? "deepseek-chat"
+              : "doubao-seed-1-6-flash-250615";
+          modelSelect.value = savedModel || defaultModel;
         }
       }
     } else {
-      // Providers without dropdown (Doubao)
+      // No providers should reach here now - all have dropdowns
       modelSelect.style.display = "none";
       modelInput.style.display = "block";
 

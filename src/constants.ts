@@ -25,7 +25,7 @@ export const PROVIDERS: ProviderConfig[] = [
         id: "doubao",
         name: "豆包 AI",
         defaultApiBase: "https://ark.cn-beijing.volces.com/api/v3",
-        usesDropdown: false,
+        usesDropdown: true,
     },
 ];
 
