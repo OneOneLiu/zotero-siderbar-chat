@@ -78,15 +78,26 @@
 </head>
 
 <body>
+  <!-- Provider Selection -->
   <div class="field">
-    <label for="api-base">Gemini API base URL</label>
-    <input id="api-base" type="text" placeholder="https://generativelanguage.googleapis.com/v1beta" />
-  </div>
-  <div class="field">
-    <label for="model">Model</label>
-    <select id="model">
+    <label for="provider">AI Provider</label>
+    <select id="provider">
       <!-- Populated by prefs.js -->
     </select>
+  </div>
+
+  <!-- API Base URL -->
+  <div class="field">
+    <label for="api-base">API Base URL</label>
+    <input id="api-base" type="text" placeholder="https://..." />
+  </div>
+  <!-- Model Selection (dynamic: dropdown for Gemini, text input for others) -->
+  <div class="field">
+    <label for="model">Model</label>
+    <select id="model-select" style="display: none;">
+      <!-- Populated for Gemini -->
+    </select>
+    <input id="model-input" type="text" placeholder="Enter model name (e.g., gpt-4o)" style="display: none;" />
   </div>
   <div class="field">
     <label for="chat-height">Chat Window Height (px)</label>
@@ -112,7 +123,7 @@
     <input id="custom-prompts" type="hidden" />
   </div>
   <div class="actions">
-    <button id="test-btn" type="button">Test Gemini</button>
+    <button id="test-btn" type="button">Test Connection</button>
     <div id="test-status"></div>
   </div>
 

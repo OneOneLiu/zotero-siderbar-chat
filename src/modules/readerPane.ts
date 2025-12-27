@@ -4,9 +4,10 @@ import tm from "markdown-it-texmath";
 import katex from "katex";
 import { config } from "../../package.json";
 import Addon, { ChatMessage } from "../addon";
-import { getSettings, buildEndpoint } from "./settings";
+import { getSettings } from "./settings";
 import { getLocaleID } from "../utils/locale";
-import { AVAILABLE_MODELS } from "../constants";
+import { GEMINI_MODELS, getProviderConfig } from "../constants";
+import { getProvider } from "../providers";
 
 Zotero.debug("[GeminiChat] Loading readerPane module...");
 
@@ -579,32 +580,47 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
     const titleGroup = createElement("div");
     titleGroup.setAttribute("class", "gemini-chat-title-group");
 
+    // Get provider display name
+    const providerConfig = getProviderConfig(currentSettings.provider);
+    const providerName = providerConfig?.name || "AI Chat";
+
     const title = createElement("div");
-    title.textContent = "Gemini";
+    title.textContent = providerName;
     title.setAttribute("class", "gemini-chat-title");
 
-    const modelSelect = createElement("select") as HTMLSelectElement;
-    modelSelect.setAttribute("class", "gemini-chat-model-select");
-
-    const models = AVAILABLE_MODELS;
-
-    models.forEach(m => {
-      const opt = createElement("option") as HTMLOptionElement;
-      opt.value = m;
-      opt.textContent = m.replace("gemini-", "");
-      if (m === currentSettings.model) {
-        opt.selected = true;
-      }
-      modelSelect.appendChild(opt);
-    });
-
-    modelSelect.addEventListener("change", () => {
-      const val = modelSelect.value;
-      Zotero.Prefs.set(config.prefsPrefix + ".model", val, true);
-    });
-
     titleGroup.appendChild(title);
-    titleGroup.appendChild(modelSelect);
+
+    // Only show model selector dropdown for Gemini
+    if (providerConfig?.usesDropdown) {
+      const modelSelect = createElement("select") as HTMLSelectElement;
+      modelSelect.setAttribute("class", "gemini-chat-model-select");
+
+      const models = GEMINI_MODELS;
+
+      models.forEach(m => {
+        const opt = createElement("option") as HTMLOptionElement;
+        opt.value = m;
+        opt.textContent = m.replace("gemini-", "");
+        if (m === currentSettings.model) {
+          opt.selected = true;
+        }
+        modelSelect.appendChild(opt);
+      });
+
+      modelSelect.addEventListener("change", () => {
+        const val = modelSelect.value;
+        Zotero.Prefs.set(config.prefsPrefix + ".model", val, true);
+      });
+
+      titleGroup.appendChild(modelSelect);
+    } else {
+      // For non-Gemini providers, show model name as text
+      const modelName = createElement("div");
+      modelName.setAttribute("class", "gemini-chat-subtitle");
+      modelName.textContent = currentSettings.model || "No model specified";
+      modelName.style.paddingLeft = "8px";
+      titleGroup.appendChild(modelName);
+    }
 
     titleRow.appendChild(titleGroup);
     header.appendChild(titleRow);
@@ -1118,7 +1134,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
       if (!settings.apiKey) {
         addon.pushMessage(itemKey, {
           role: "system",
-          text: "Missing API key. Set it in Preferences -> Gemini Chat.",
+          text: `Missing API key. Set it in Preferences -> LLM Chat.`,
           at: Date.now(),
         });
         renderMessages();
@@ -1160,12 +1176,27 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
         });
 
         const contextParts: any[] = [];
-        for (const pdfItem of allContextFiles) {
-          const part = await getPdfContextPart(pdfItem);
-          if (part) {
-            const title = pdfItem.getField("title") || pdfItem.parentItem?.getField("title") || "Untitled";
-            contextParts.push({ text: `[Context Document: ${title}]` });
-            contextParts.push({ inlineData: part });
+
+        // Handle PDF context based on provider
+        if (settings.provider === "gemini") {
+          // Gemini: Send base64 PDF (multimodal support)
+          for (const pdfItem of allContextFiles) {
+            const part = await getPdfContextPart(pdfItem);
+            if (part) {
+              const title = pdfItem.getField("title") || pdfItem.parentItem?.getField("title") || "Untitled";
+              contextParts.push({ text: `[Context Document: ${title}]` });
+              contextParts.push({ inlineData: part });
+            }
+          }
+        } else {
+          // DeepSeek/Doubao: Extract and send PDF text
+          for (const pdfItem of allContextFiles) {
+            const pdfText = await getPdfText(pdfItem);
+            if (pdfText) {
+              const title = pdfItem.getField("title") || pdfItem.parentItem?.getField("title") || "Untitled";
+              const textContent = `[Context Document: ${title}]\n\n${pdfText}`;
+              contextParts.push({ text: textContent });
+            }
           }
         }
 
@@ -1175,7 +1206,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
         });
 
         // Find last user message in 'contents' and prepend context
-        if (contents.length > 0) {
+        if (contents.length > 0 && contextParts.length > 0) {
           let lastUserMsg = null;
           for (let i = contents.length - 1; i >= 0; i--) {
             if (contents[i].role === 'user') {
@@ -1183,7 +1214,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
               break;
             }
           }
-          if (lastUserMsg && contextParts.length > 0) {
+          if (lastUserMsg) {
             lastUserMsg.parts.unshift(...contextParts);
           }
         }
@@ -1193,7 +1224,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
 
         let accumulatedText = "";
 
-        for await (const chunk of callGeminiStream(settings, contents)) {
+        for await (const chunk of callAIStream(settings, contents)) {
           if (typeof chunk === "string") {
             accumulatedText += chunk;
             modelMsg.text = accumulatedText;
@@ -1218,7 +1249,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
 
         addon.pushMessage(itemKey, {
           role: "system",
-          text: `Gemini error: ${e?.message || e}`,
+          text: `AI error: ${e?.message || e}`,
           at: Date.now(),
         });
       } finally {
@@ -1426,6 +1457,71 @@ async function getPdfContextPart(item: Zotero.Item): Promise<{ mimeType: string;
   return null;
 }
 
+/**
+ * Extract text content from PDF for non-Gemini providers
+ */
+async function getPdfText(item: Zotero.Item): Promise<string | null> {
+  Zotero.debug("[GeminiChat] getPdfText called with item: " + item?.id);
+
+  // The item passed here is already an attachment
+  if (!item) {
+    Zotero.debug("[GeminiChat] No item provided for PDF text extraction");
+    return null;
+  }
+
+  try {
+    const itemID = item.id;
+    Zotero.debug("[GeminiChat] Attempting to extract text from item ID: " + itemID);
+
+    // Check if PDF has been indexed using the correct constant
+    // @ts-ignore
+    const indexedState = await Zotero.Fulltext.getIndexedState(item);
+    // @ ts-ignore
+    const INDEX_STATE_INDEXED = Zotero.Fulltext.INDEX_STATE_INDEXED || 2;
+
+    Zotero.debug(`[GeminiChat] PDF index status for item ${itemID}: ${indexedState} (indexed=${INDEX_STATE_INDEXED})`);
+
+    // If not indexed, index it first
+    if (indexedState !== INDEX_STATE_INDEXED) {
+      Zotero.debug("[GeminiChat] PDF not indexed, triggering indexing...");
+      // @ts-ignore
+      await Zotero.Fulltext.indexItems([itemID]);
+      // Wait for indexing to complete
+      // @ts-ignore
+      await Zotero.Promise.delay(1000);
+      Zotero.debug("[GeminiChat] Waited 1000ms for indexing");
+    }
+
+    // Read the cached fulltext file
+    // @ts-ignore
+    const cacheFile = Zotero.Fulltext.getItemCacheFile(item);
+    Zotero.debug("[GeminiChat] Cache file path: " + cacheFile?.path);
+
+    if (cacheFile && await IOUtils.exists(cacheFile.path)) {
+      Zotero.debug("[GeminiChat] Cache file exists, reading...");
+      // @ts-ignore
+      const content = await Zotero.File.getContentsAsync(cacheFile.path);
+
+      if (content) {
+        const text = typeof content === 'string'
+          ? content
+          : new TextDecoder().decode(content as BufferSource);
+
+        if (text && text.trim().length > 0) {
+          Zotero.debug(`[GeminiChat] ✅ Extracted ${text.length} characters from PDF`);
+          return text.trim();
+        }
+      }
+    }
+
+    Zotero.debug("[GeminiChat] ⚠️ No text content found in PDF cache");
+    return null;
+  } catch (e) {
+    Zotero.debug("[GeminiChat] ❌ Failed to extract PDF text: " + e);
+    return null;
+  }
+}
+
 function getBestAttachment(item: Zotero.Item): Zotero.Item | null {
   if (item.isAttachment()) return item;
   if (item.isRegularItem()) {
@@ -1478,10 +1574,18 @@ function arrayBufferToBase64(buffer: Uint8Array | ArrayBuffer | any): string {
   return btoa(binary);
 }
 
-async function* callGeminiStream(settings: ReturnType<typeof getSettings>, contents: any[]): AsyncGenerator<string | { usage: any }, void, unknown> {
-  // Use stream=true
-  const endpoint = buildEndpoint(settings, true);
-  const payload = { contents };
+async function* callAIStream(settings: ReturnType<typeof getSettings>, contents: any[]): AsyncGenerator<string | { usage: any }, void, unknown> {
+  const provider = getProvider(settings.provider);
+
+  // Build endpoint using provider
+  const endpoint = provider.buildEndpoint({
+    apiBase: settings.apiBase,
+    model: settings.model,
+    apiKey: settings.apiKey,
+  }, true);
+
+  // Format request using provider
+  const payload = provider.formatRequest(contents, settings.model);
 
   let signal: AbortSignal | undefined;
   if (typeof AbortController !== "undefined") {
@@ -1491,9 +1595,17 @@ async function* callGeminiStream(settings: ReturnType<typeof getSettings>, conte
     signal = controller.signal;
   }
 
+  // Prepare headers
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+  // OpenAI-compatible providers use Authorization header
+  if (settings.provider !== "gemini") {
+    headers["Authorization"] = `Bearer ${settings.apiKey}`;
+  }
+
   const res = await fetch(endpoint, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(payload),
     signal,
   });
@@ -1577,17 +1689,16 @@ async function* callGeminiStream(settings: ReturnType<typeof getSettings>, conte
           const jsonStr = buffer.substring(start, end + 1);
           try {
             const parsed = JSON.parse(jsonStr);
-            // Extract text
-            const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (text) {
-              yield text;
-            }
-            // Extract usage metadata
-            if (parsed.usageMetadata) {
-              yield { usage: parsed.usageMetadata };
+            const parsedChunk = provider.parseStreamChunk(parsed);
+            if (parsedChunk) {
+              if (parsedChunk.type === "text" && parsedChunk.text) {
+                yield parsedChunk.text;
+              } else if (parsedChunk.type === "usage" && parsedChunk.usage) {
+                yield { usage: parsedChunk.usage };
+              }
             }
           } catch (e) {
-            // ignore parse error, likely not a full object yet or just comma
+            // ignore parse error
           }
 
           // Move buffer forward

@@ -1,14 +1,22 @@
 import { config } from "../../package.json";
+import { PROVIDERS } from "../constants";
 
 function getPrefKey(key: string) {
   return `${config.prefsPrefix}.${key}`;
 }
 
 export function getSettings() {
+  const provider = (Zotero.Prefs.get(getPrefKey("provider"), true) as string) || "gemini";
+
+  // Get default API base for the selected provider
+  const providerConfig = PROVIDERS.find(p => p.id === provider);
+  const defaultApiBase = providerConfig?.defaultApiBase || "https://generativelanguage.googleapis.com/v1beta";
+
   return {
+    provider,
     apiBase:
       (Zotero.Prefs.get(getPrefKey("apiBase"), true) as string) ||
-      "https://generativelanguage.googleapis.com/v1beta",
+      defaultApiBase,
     model:
       (Zotero.Prefs.get(getPrefKey("model"), true) as string) ||
       "gemini-1.5-flash-latest",
@@ -18,8 +26,4 @@ export function getSettings() {
   };
 }
 
-export function buildEndpoint(settings: { apiBase: string; model: string; apiKey: string }, stream = false): string {
-  const method = stream ? "streamGenerateContent" : "generateContent";
-  return `${settings.apiBase}/models/${settings.model}:${method}?key=${settings.apiKey}`;
-}
 

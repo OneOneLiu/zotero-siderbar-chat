@@ -1,6 +1,6 @@
 import { config } from "../../package.json";
-import { buildEndpoint } from "../modules/settings";
-import { AVAILABLE_MODELS } from "../constants";
+import { GEMINI_MODELS, PROVIDERS } from "../constants";
+import { getProvider } from "../providers";
 
 function getZotero(): any {
   const w = window as any;
@@ -25,10 +25,12 @@ function getInput(id: string): HTMLInputElement | HTMLTextAreaElement | HTMLSele
 }
 
 function initForm(Zotero: any) {
-  const apiBase = getInput("api-base");
-  const model = getInput("model");
-  const apiKey = getInput("api-key");
-  const chatHeight = getInput("chat-height");
+  const providerSelect = getInput("provider") as HTMLSelectElement;
+  const apiBase = getInput("api-base") as HTMLInputElement;
+  const modelSelect = getInput("model-select") as HTMLSelectElement;
+  const modelInput = getInput("model-input") as HTMLInputElement;
+  const apiKey = getInput("api-key") as HTMLInputElement;
+  const chatHeight = getInput("chat-height") as HTMLInputElement;
   const customPromptsInput = getInput("custom-prompts");
   const promptsList = document.getElementById("prompts-list") as HTMLDivElement;
   const newPromptName = document.getElementById("new-prompt-name") as HTMLInputElement;
@@ -39,23 +41,86 @@ function initForm(Zotero: any) {
   const status = document.getElementById("test-status") as HTMLDivElement;
   const testBtn = document.getElementById("test-btn") as HTMLButtonElement;
 
-  apiBase.value =
-    (Zotero.Prefs.get(getPrefKey("apiBase"), true) as string) ||
-    "https://generativelanguage.googleapis.com/v1beta";
-  "https://generativelanguage.googleapis.com/v1beta";
+  // Populate providers
+  PROVIDERS.forEach(p => {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = p.name;
+    providerSelect.appendChild(opt);
+  });
 
-  // Populate models
-  model.innerHTML = "";
-  AVAILABLE_MODELS.forEach(m => {
+  // Load selected provider
+  const savedProvider = (Zotero.Prefs.get(getPrefKey("provider"), true) as string) || "gemini";
+  providerSelect.value = savedProvider;
+
+  // Populate Gemini models
+  modelSelect.innerHTML = "";
+  GEMINI_MODELS.forEach(m => {
     const opt = document.createElement("option");
     opt.value = m;
     opt.textContent = m;
-    model.appendChild(opt);
+    modelSelect.appendChild(opt);
   });
 
-  model.value =
-    (Zotero.Prefs.get(getPrefKey("model"), true) as string) ||
-    "gemini-1.5-flash-latest";
+  // Function to update UI based on selected provider
+  const updateProviderUI = (isInitialLoad = false) => {
+    const selectedProvider = providerSelect.value;
+    const providerConfig = PROVIDERS.find(p => p.id === selectedProvider);
+
+    if (!providerConfig) return;
+
+    // When switching providers (not initial load), reset to defaults
+    if (!isInitialLoad) {
+      // Reset API base to new provider's default
+      apiBase.value = providerConfig.defaultApiBase;
+      save("apiBase", providerConfig.defaultApiBase);
+
+      // Clear API key when switching providers (different providers need different keys)
+      apiKey.value = "";
+      save("apiKey", "");
+    } else {
+      // On initial load, use saved value or default
+      apiBase.value = (Zotero.Prefs.get(getPrefKey("apiBase"), true) as string) || providerConfig.defaultApiBase;
+    }
+
+    // Show/hide model input based on provider
+    if (providerConfig.usesDropdown) {
+      // Gemini: Use dropdown
+      modelSelect.style.display = "block";
+      modelInput.style.display = "none";
+
+      if (!isInitialLoad) {
+        // Reset to default Gemini model when switching
+        modelSelect.value = "gemini-1.5-flash-latest";
+        save("model", "gemini-1.5-flash-latest");
+      } else {
+        modelSelect.value = (Zotero.Prefs.get(getPrefKey("model"), true) as string) || "gemini-1.5-flash-latest";
+      }
+    } else {
+      // Others: Use text input
+      modelSelect.style.display = "none";
+      modelInput.style.display = "block";
+
+      if (!isInitialLoad) {
+        // Clear model field when switching to a new provider
+        modelInput.value = "";
+        save("model", "");
+      } else {
+        modelInput.value = (Zotero.Prefs.get(getPrefKey("model"), true) as string) || "";
+      }
+
+      modelInput.placeholder = `Enter model name (e.g., ${selectedProvider === 'deepseek' ? 'deepseek-chat' : 'doubao-model'})`;
+    }
+  };
+
+  // Initial UI update
+  updateProviderUI(true);
+
+  // Update UI when provider changes
+  providerSelect.addEventListener("change", () => {
+    save("provider", providerSelect.value);
+    updateProviderUI(false); // Pass false to reset fields
+  });
 
   apiKey.value = (Zotero.Prefs.get(getPrefKey("apiKey"), true) as string) || "";
   chatHeight.value = (Zotero.Prefs.get(getPrefKey("chatHeight"), true) as string) || "500";
@@ -184,7 +249,11 @@ function initForm(Zotero: any) {
   renderPrompts();
 
   apiBase.addEventListener("change", () => save("apiBase", apiBase.value.trim()));
-  model.addEventListener("change", () => save("model", model.value.trim()));
+
+  // Save model based on which input is visible
+  modelSelect.addEventListener("change", () => save("model", modelSelect.value.trim()));
+  modelInput.addEventListener("change", () => save("model", modelInput.value.trim()));
+
   apiKey.addEventListener("change", () => save("apiKey", apiKey.value.trim()));
   chatHeight.addEventListener("change", () => save("chatHeight", chatHeight.value.trim()));
   // customPrompts listener removed as it's handled by updatePrompts
@@ -193,18 +262,50 @@ function initForm(Zotero: any) {
     status.textContent = "Testing...";
     status.style.color = "#555";
     try {
-      const endpoint = buildEndpoint({
+      const selectedProvider = providerSelect.value;
+      const provider = getProvider(selectedProvider);
+      const providerConfig = PROVIDERS.find(p => p.id === selectedProvider);
+
+      if (!providerConfig) {
+        throw new Error("Invalid provider selected");
+      }
+
+      // Get current model value based on input type
+      const currentModel = providerConfig.usesDropdown ? modelSelect.value.trim() : modelInput.value.trim();
+
+      if (!currentModel) {
+        throw new Error("Please enter a model name");
+      }
+
+      // Build endpoint using provider
+      const endpoint = provider.buildEndpoint({
         apiBase: apiBase.value.trim(),
         apiKey: apiKey.value.trim(),
-        model: model.value.trim(),
-      });
+        model: currentModel,
+      }, false);
+
+      // Format a simple test message
+      const testContents = [{
+        role: "user" as const,
+        parts: [{ text: `Ping from Zotero ${providerConfig.name} Chat preferences.` }]
+      }];
+
+      const payload = provider.formatRequest(testContents, currentModel);
+
+      // Prepare headers
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+      // OpenAI-compatible providers use Authorization header
+      if (selectedProvider !== "gemini") {
+        headers["Authorization"] = `Bearer ${apiKey.value.trim()}`;
+      }
+
       const res = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: "Ping from Zotero Gemini Chat preferences." }] }],
-        }),
+        headers,
+        body: JSON.stringify(payload),
       });
+
       if (!res.ok) {
         const text = await res.text();
         throw new Error(`${res.status} ${res.statusText}: ${text}`);
