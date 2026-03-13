@@ -1,4 +1,4 @@
-# Zotero Gemini Chat
+# Zotero Sidebar Chat
 
 > [English](#english) | [简体中文](#简体中文)
 
