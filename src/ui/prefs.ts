@@ -275,6 +275,11 @@ function initForm(Zotero: any) {
   // ---- Concurrency ----
   const concurrency = $input("concurrency") as HTMLSelectElement;
   concurrency.value = load("concurrency", "4");
+
+  // ---- RAG Chunks ----
+  const ragChunks = $input("rag-chunks") as HTMLSelectElement;
+  ragChunks.value = load("ragChunksPerQuery", "15");
+  ragChunks.addEventListener("change", () => save("ragChunksPerQuery", ragChunks.value));
   concurrency.addEventListener("change", () => save("concurrency", concurrency.value));
 
   // ---- Custom Quick Prompts ----

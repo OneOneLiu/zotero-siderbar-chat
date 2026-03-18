@@ -1,7 +1,9 @@
 import { config } from "../../package.json";
 import Addon from "../addon";
+import { buildRagIndexForItem, hasRagIndex } from "./ragIndex";
 
 const MENU_ID = "gemini-chat-multi-paper-analysis";
+const RAG_MENU_ID = "gemini-chat-build-rag-index";
 
 function findPdfAttachment(item: Zotero.Item): Zotero.Item | null {
   if (item.isAttachment() && item.attachmentContentType === "application/pdf") {
@@ -83,14 +85,81 @@ export function registerContextMenu(win: Window, addon: Addon) {
   });
 
   menu.appendChild(menuItem);
-  Zotero.debug("[GeminiChat] Context menu item registered.");
+
+  if (!doc.getElementById(RAG_MENU_ID)) {
+    const ragItem = doc.createXULElement("menuitem");
+    ragItem.id = RAG_MENU_ID;
+    ragItem.setAttribute("label", "Build RAG Index");
+    ragItem.setAttribute("class", "menuitem-iconic");
+
+    ragItem.addEventListener("command", async () => {
+      try {
+        const zoteroPane = (win as any).ZoteroPane || Zotero.getActiveZoteroPane();
+        if (!zoteroPane) return;
+
+        const selectedItems: Zotero.Item[] = zoteroPane.getSelectedItems();
+        if (!selectedItems || selectedItems.length === 0) {
+          (win as any).alert("Please select at least one item.");
+          return;
+        }
+
+        const items: Zotero.Item[] = [];
+        for (const item of selectedItems) {
+          const pdf = findPdfAttachment(item);
+          if (pdf) items.push(item);
+        }
+
+        if (items.length === 0) {
+          (win as any).alert("No PDF attachments found in the selected items.");
+          return;
+        }
+
+        const total = items.length;
+        let built = 0;
+        let skipped = 0;
+        let failed = 0;
+
+        for (const item of items) {
+          const title = String(item.getField("title") || "Untitled");
+          try {
+            const already = await hasRagIndex(item.id);
+            if (already) {
+              skipped++;
+            } else {
+              await buildRagIndexForItem(item);
+              built++;
+            }
+          } catch (e: any) {
+            failed++;
+            Zotero.debug(`[GeminiChat] RAG index build failed for ${title}: ${e}`);
+          }
+        }
+
+        let msg = `RAG Index Complete\n\n`;
+        msg += `Total: ${total} paper(s)\n`;
+        if (built > 0) msg += `New indices built: ${built}\n`;
+        if (skipped > 0) msg += `Already indexed (skipped): ${skipped}\n`;
+        if (failed > 0) msg += `Failed: ${failed}\n`;
+        msg += `\nRAG indices are stored locally and will be reused automatically in multi-paper analysis.`;
+
+        (win as any).alert(msg);
+
+      } catch (e) {
+        Zotero.debug(`[GeminiChat] RAG build handler error: ${e}`);
+      }
+    });
+
+    menu.appendChild(ragItem);
+  }
+
+  Zotero.debug("[GeminiChat] Context menu items registered.");
 }
 
 export function unregisterContextMenu(win: Window) {
   const doc = win.document;
   if (!doc) return;
-  const item = doc.getElementById(MENU_ID);
-  if (item) item.remove();
-  const sep = doc.getElementById(`${MENU_ID}-separator`);
-  if (sep) sep.remove();
+  for (const id of [MENU_ID, RAG_MENU_ID, `${MENU_ID}-separator`]) {
+    const el = doc.getElementById(id);
+    if (el) el.remove();
+  }
 }

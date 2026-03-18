@@ -304,6 +304,25 @@
     </div>
 
     <div class="section">
+      <div class="section-title">RAG (Retrieval-Augmented Generation)</div>
+      <div class="hint" style="margin-top:-8px;margin-bottom:10px;">
+        Papers are split into chunks and indexed locally. In follow-up questions, only relevant chunks are sent to the AI instead of the full text, saving tokens significantly.
+      </div>
+      <div class="field">
+        <label for="rag-chunks">Chunks per query</label>
+        <select id="rag-chunks" style="width:160px;">
+          <option value="5">5</option>
+          <option value="10">10</option>
+          <option value="15" selected>15 (default)</option>
+          <option value="20">20</option>
+          <option value="25">25</option>
+          <option value="30">30</option>
+        </select>
+        <div class="hint">Number of most-relevant text chunks to retrieve per follow-up question. More chunks = more context but higher token cost.</div>
+      </div>
+    </div>
+
+    <div class="section">
       <div class="section-title">
         Per-paper Extraction Prompt
         <button class="reset-link" id="reset-extraction-prompt">Reset to default</button>
