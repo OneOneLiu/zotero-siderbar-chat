@@ -1,6 +1,7 @@
 import { config } from "../package.json";
 import { registerPreferencePane } from "./modules/prefsPane";
 import { registerReaderPane, registerSidebarButton } from "./modules/readerPane";
+import { registerContextMenu } from "./modules/contextMenu";
 
 export type ChatMessage = {
   role: "user" | "model" | "system";
@@ -58,10 +59,7 @@ class Addon {
   }
 
   public onMainWindowLoad(win: Window) {
-    // FTL injection disabled due to crash in Zotero 8 context menu
-    // if ((win as any).MozXULElement) {
-    //   (win as any).MozXULElement.insertFTLIfNeeded(`${config.addonRef}.ftl`);
-    // }
+    registerContextMenu(win, this);
   }
 
   public getSession(key: string): ChatMessage[] {

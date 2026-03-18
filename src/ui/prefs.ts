@@ -2,6 +2,49 @@ import { config } from "../../package.json";
 import { PROVIDERS, GEMINI_MODELS, DEEPSEEK_MODELS, DOUBAO_MODELS } from "../constants";
 import { getProvider } from "../providers";
 
+const DEFAULT_EXTRACTION_PROMPT = `The user's research question is:
+"""
+{question}
+"""
+
+Based on this question, read the following paper and extract:
+
+**Part A - Structured extraction** (2-4 sentences each):
+1. **Research Problem**: What problem? Limitations of existing methods?
+2. **Core Contributions**: Main contributions? (1-3)
+3. **Method Overview**: Core method? Key innovation?
+4. **Experimental Results**: Datasets? Key metrics?
+5. **Limitations**: Known limitations?
+6. **Reproducibility**: Code/data available?
+
+**Part B - Relevance to user's question**:
+Highlight parts most relevant to the user's question with specific details.
+
+Use the same language as the user's question.`;
+
+const DEFAULT_SYNTHESIS_PROMPT = `The user's research question is:
+"""
+{question}
+"""
+
+Below are structured extractions from {count} paper(s).
+
+Provide a comprehensive analysis answering the user's question:
+
+## 1. Direct Answer
+Directly address the question with evidence.
+
+## 2. Cross-paper Evidence Summary
+Table comparing each paper (title, method/finding, key data).
+
+## 3. Synthesis & Insights
+Connect findings across papers.
+
+## 4. Gaps & Recommendations
+What remains unanswered? Next steps?
+
+Use the same language as the user. Cite which paper evidence comes from.`;
+
 function getZotero(): any {
   const w = window as any;
   return (
@@ -16,7 +59,11 @@ function getPrefKey(key: string) {
   return `${config.prefsPrefix}.${key}`;
 }
 
-function getInput(id: string): HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement {
+function $(id: string) {
+  return document.getElementById(id)!;
+}
+
+function $input(id: string): HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement {
   const el = document.getElementById(id);
   if (!el || (!(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement) && !(el instanceof HTMLSelectElement))) {
     throw new Error(`Missing input ${id}`);
@@ -24,170 +71,226 @@ function getInput(id: string): HTMLInputElement | HTMLTextAreaElement | HTMLSele
   return el;
 }
 
+function initTabs() {
+  const btns = document.querySelectorAll(".tab-btn");
+  btns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      btns.forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+      btn.classList.add("active");
+      const tabId = (btn as HTMLElement).getAttribute("data-tab");
+      $(`tab-${tabId}`).classList.add("active");
+    });
+  });
+}
+
 function initForm(Zotero: any) {
-  const providerSelect = getInput("provider") as HTMLSelectElement;
-  const apiBase = getInput("api-base") as HTMLInputElement;
-  const modelSelect = getInput("model-select") as HTMLSelectElement;
-  const modelInput = getInput("model-input") as HTMLInputElement;
-  const apiKey = getInput("api-key") as HTMLInputElement;
-  const chatHeight = getInput("chat-height") as HTMLInputElement;
-  const customPromptsInput = getInput("custom-prompts");
-  const promptsList = document.getElementById("prompts-list") as HTMLDivElement;
-  const newPromptName = document.getElementById("new-prompt-name") as HTMLInputElement;
-  const newPromptText = document.getElementById("new-prompt-text") as HTMLInputElement;
-  const addPromptBtn = document.getElementById("add-prompt-btn") as HTMLButtonElement;
-  const cancelEditBtn = document.getElementById("cancel-edit-btn") as HTMLButtonElement;
+  const save = (id: string, value: string) => {
+    Zotero.Prefs.set(getPrefKey(id), value, true);
+  };
+  const load = (id: string, fallback = ""): string => {
+    return (Zotero.Prefs.get(getPrefKey(id), true) as string) || fallback;
+  };
 
-  const status = document.getElementById("test-status") as HTMLDivElement;
-  const testBtn = document.getElementById("test-btn") as HTMLButtonElement;
+  // ---- Basic Settings ----
+  const providerSelect = $input("provider") as HTMLSelectElement;
+  const apiBase = $input("api-base") as HTMLInputElement;
+  const modelSelect = $input("model-select") as HTMLSelectElement;
+  const modelInput = $input("model-input") as HTMLInputElement;
+  const apiKey = $input("api-key") as HTMLInputElement;
+  const chatHeight = $input("chat-height") as HTMLInputElement;
 
-  // Populate providers
   PROVIDERS.forEach(p => {
     const opt = document.createElement("option");
     opt.value = p.id;
     opt.textContent = p.name;
     providerSelect.appendChild(opt);
   });
+  providerSelect.value = load("provider", "gemini");
 
-  // Load selected provider
-  const savedProvider = (Zotero.Prefs.get(getPrefKey("provider"), true) as string) || "gemini";
-  providerSelect.value = savedProvider;
+  const getModelsForProvider = (provider: string): string[] => {
+    if (provider === "gemini") return GEMINI_MODELS;
+    if (provider === "deepseek") return DEEPSEEK_MODELS;
+    if (provider === "doubao") return DOUBAO_MODELS;
+    return [];
+  };
 
-  // Function to populate model dropdown based on provider
-  const populateModelDropdown = (provider: string) => {
-    modelSelect.innerHTML = "";
-    let models: string[] = [];
+  const getDefaultModel = (provider: string): string => {
+    if (provider === "gemini") return "gemini-1.5-flash-latest";
+    if (provider === "deepseek") return "deepseek-chat";
+    if (provider === "doubao") return "doubao-seed-1-6-flash-250615";
+    return "";
+  };
 
-    if (provider === "gemini") {
-      models = GEMINI_MODELS;
-    } else if (provider === "deepseek") {
-      models = DEEPSEEK_MODELS;
-    } else if (provider === "doubao") {
-      models = DOUBAO_MODELS;
+  const populateDropdown = (select: HTMLSelectElement, models: string[], addSame = false, addCustom = true) => {
+    select.innerHTML = "";
+    if (addSame) {
+      const o = document.createElement("option");
+      o.value = "__same__";
+      o.textContent = "Same as main model";
+      select.appendChild(o);
     }
-
-    // Add model options
     models.forEach(m => {
-      const opt = document.createElement("option");
-      opt.value = m;
-      opt.textContent = m;
-      modelSelect.appendChild(opt);
+      const o = document.createElement("option");
+      o.value = m;
+      o.textContent = m;
+      select.appendChild(o);
     });
-
-    // Add "Custom..." option for providers with dropdown
-    if (models.length > 0) {
-      const customOpt = document.createElement("option");
-      customOpt.value = "__custom__";
-      customOpt.textContent = "Custom...";
-      modelSelect.appendChild(customOpt);
+    if (addCustom) {
+      const o = document.createElement("option");
+      o.value = "__custom__";
+      o.textContent = "Custom...";
+      select.appendChild(o);
     }
   };
 
-  // Function to update UI based on selected provider
+  const setupModelPair = (
+    select: HTMLSelectElement,
+    input: HTMLInputElement,
+    prefKey: string,
+    provider: string,
+    isInitialLoad: boolean,
+    addSame = false,
+  ) => {
+    const models = getModelsForProvider(provider);
+    populateDropdown(select, models, addSame);
+
+    const saved = load(prefKey, addSame ? "__same__" : getDefaultModel(provider));
+    const allVals = Array.from(select.options).map((o: HTMLOptionElement) => o.value);
+
+    if (saved && !allVals.includes(saved) && saved !== "__custom__") {
+      select.value = "__custom__";
+      input.value = saved;
+      select.style.display = "block";
+      input.style.display = "block";
+    } else if (saved === "__custom__") {
+      select.value = "__custom__";
+      select.style.display = "block";
+      input.style.display = "block";
+    } else {
+      select.value = saved;
+      select.style.display = "block";
+      input.style.display = "none";
+      if (!isInitialLoad) {
+        const def = addSame ? "__same__" : getDefaultModel(provider);
+        select.value = def;
+        save(prefKey, def);
+      }
+    }
+  };
+
+  const wireModelPair = (select: HTMLSelectElement, input: HTMLInputElement, prefKey: string) => {
+    select.addEventListener("change", () => {
+      if (select.value === "__custom__") {
+        input.style.display = "block";
+        input.focus();
+        save(prefKey, input.value || "");
+      } else {
+        input.style.display = "none";
+        save(prefKey, select.value);
+      }
+    });
+    input.addEventListener("input", () => save(prefKey, input.value));
+  };
+
+  // ---- Extraction model ----
+  const extractModelSelect = $input("extraction-model-select") as HTMLSelectElement;
+  const extractModelInput = $input("extraction-model-input") as HTMLInputElement;
+
   const updateProviderUI = (isInitialLoad = false) => {
-    const selectedProvider = providerSelect.value;
-    const providerConfig = PROVIDERS.find(p => p.id === selectedProvider);
+    const provider = providerSelect.value;
+    const cfg = PROVIDERS.find(p => p.id === provider);
+    if (!cfg) return;
 
-    if (!providerConfig) return;
-
-    // When switching providers (not initial load), reset to defaults
     if (!isInitialLoad) {
-      // Reset API base to new provider's default
-      apiBase.value = providerConfig.defaultApiBase;
-      save("apiBase", providerConfig.defaultApiBase);
-
-      // Clear API key when switching providers (different providers need different keys)
+      apiBase.value = cfg.defaultApiBase;
+      save("apiBase", cfg.defaultApiBase);
       apiKey.value = "";
       save("apiKey", "");
     } else {
-      // On initial load, use saved value or default
-      apiBase.value = (Zotero.Prefs.get(getPrefKey("apiBase"), true) as string) || providerConfig.defaultApiBase;
+      apiBase.value = load("apiBase", cfg.defaultApiBase);
     }
 
-    // Show/hide model input based on provider
-    if (providerConfig.usesDropdown) {
-      // Providers with dropdown (Gemini, DeepSeek)
-      populateModelDropdown(selectedProvider);
-
-      const savedModel = (Zotero.Prefs.get(getPrefKey("model"), true) as string) || "";
-
-      // Check if saved model is in the dropdown list
-      const modelOptions = Array.from(modelSelect.options).map((opt: HTMLOptionElement) => opt.value);
-      const isCustomModel = savedModel && !modelOptions.includes(savedModel) && savedModel !== "__custom__";
-
-      if (isCustomModel || savedModel === "__custom__") {
-        // Show custom input
-        modelSelect.value = "__custom__";
-        modelSelect.style.display = "block";
-        modelInput.style.display = "block";
-        modelInput.value = isCustomModel ? savedModel : "";
-      } else {
-        // Use dropdown
-        modelSelect.style.display = "block";
-        modelInput.style.display = "none";
-
-        if (!isInitialLoad) {
-          // Reset to first model when switching
-          const defaultModel = selectedProvider === "gemini"
-            ? "gemini-1.5-flash-latest"
-            : selectedProvider === "deepseek"
-              ? "deepseek-chat"
-              : "doubao-seed-1-6-flash-250615";
-          modelSelect.value = defaultModel;
-          save("model", defaultModel);
-        } else {
-          const defaultModel = selectedProvider === "gemini"
-            ? "gemini-1.5-flash-latest"
-            : selectedProvider === "deepseek"
-              ? "deepseek-chat"
-              : "doubao-seed-1-6-flash-250615";
-          modelSelect.value = savedModel || defaultModel;
-        }
-      }
-    } else {
-      // No providers should reach here now - all have dropdowns
-      modelSelect.style.display = "none";
-      modelInput.style.display = "block";
-
-      if (!isInitialLoad) {
-        // Clear model field when switching to a new provider
-        modelInput.value = "";
-        save("model", "");
-      } else {
-        modelInput.value = (Zotero.Prefs.get(getPrefKey("model"), true) as string) || "";
-      }
-
-      modelInput.placeholder = `Enter model name(e.g., doubao - model)`;
-    }
+    setupModelPair(modelSelect, modelInput, "model", provider, isInitialLoad);
+    setupModelPair(extractModelSelect, extractModelInput, "extractionModel", provider, isInitialLoad, true);
   };
 
-  // Initial UI update
   updateProviderUI(true);
 
-  // Update UI when provider changes
+  wireModelPair(modelSelect, modelInput, "model");
+  wireModelPair(extractModelSelect, extractModelInput, "extractionModel");
+
   providerSelect.addEventListener("change", () => {
     save("provider", providerSelect.value);
-    updateProviderUI(false); // Pass false to reset fields
+    updateProviderUI(false);
   });
 
-  apiKey.value = (Zotero.Prefs.get(getPrefKey("apiKey"), true) as string) || "";
-  chatHeight.value = (Zotero.Prefs.get(getPrefKey("chatHeight"), true) as string) || "500";
+  apiKey.value = load("apiKey");
+  chatHeight.value = load("chatHeight", "500");
+  apiBase.addEventListener("change", () => save("apiBase", apiBase.value.trim()));
+  apiKey.addEventListener("change", () => save("apiKey", apiKey.value.trim()));
+  chatHeight.addEventListener("change", () => save("chatHeight", chatHeight.value.trim()));
 
-  let prompts: Array<{ name: string, prompt: string }> = [];
-  try {
-    prompts = JSON.parse((Zotero.Prefs.get(getPrefKey("customPrompts"), true) as string) || "[]");
-  } catch (e) {
-    prompts = [];
-  }
+  // ---- Test connection ----
+  const testBtn = $("test-btn") as HTMLButtonElement;
+  const status = $("test-status") as HTMLDivElement;
+  testBtn.addEventListener("click", async () => {
+    status.textContent = "Testing...";
+    status.style.color = "#555";
+    try {
+      const selectedProvider = providerSelect.value;
+      const provider = getProvider(selectedProvider);
+      const providerConfig = PROVIDERS.find(p => p.id === selectedProvider);
+      if (!providerConfig) throw new Error("Invalid provider selected");
+
+      const currentModel = providerConfig.usesDropdown
+        ? (modelSelect.value === "__custom__" ? modelInput.value.trim() : modelSelect.value.trim())
+        : modelInput.value.trim();
+      if (!currentModel) throw new Error("Please enter a model name");
+
+      const endpoint = provider.buildEndpoint({
+        apiBase: apiBase.value.trim(),
+        apiKey: apiKey.value.trim(),
+        model: currentModel,
+      }, false);
+
+      const testContents = [{ role: "user" as const, parts: [{ text: `Ping from Zotero Sidebar Chat.` }] }];
+      const payload = provider.formatRequest(testContents, currentModel);
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (selectedProvider !== "gemini") headers["Authorization"] = `Bearer ${apiKey.value.trim()}`;
+
+      const res = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(payload) });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`${res.status} ${res.statusText}: ${text}`);
+      }
+      status.textContent = "OK";
+      status.style.color = "#2e7d32";
+    } catch (e: any) {
+      status.textContent = `Failed: ${e?.message || e}`;
+      status.style.color = "#b3261e";
+    }
+  });
+
+  // ---- Concurrency ----
+  const concurrency = $input("concurrency") as HTMLSelectElement;
+  concurrency.value = load("concurrency", "4");
+  concurrency.addEventListener("change", () => save("concurrency", concurrency.value));
+
+  // ---- Custom Quick Prompts ----
+  const customPromptsInput = $input("custom-prompts");
+  const promptsList = $("prompts-list") as HTMLDivElement;
+  const newPromptName = $("new-prompt-name") as HTMLInputElement;
+  const newPromptText = $("new-prompt-text") as HTMLInputElement;
+  const addPromptBtn = $("add-prompt-btn") as HTMLButtonElement;
+  const cancelEditBtn = $("cancel-edit-btn") as HTMLButtonElement;
+
+  let prompts: Array<{ name: string; prompt: string }> = [];
+  try { prompts = JSON.parse(load("customPrompts", "[]")); } catch (_) { prompts = []; }
   customPromptsInput.value = JSON.stringify(prompts);
-
   let editingIndex = -1;
 
-  const save = (id: string, value: string) => {
-    Zotero.Prefs.set(getPrefKey(id), value, true);
-  };
-
-  const resetForm = () => {
+  const resetPromptForm = () => {
     editingIndex = -1;
     newPromptName.value = "";
     newPromptText.value = "";
@@ -199,40 +302,24 @@ function initForm(Zotero: any) {
     promptsList.innerHTML = "";
     prompts.forEach((p, index) => {
       const row = document.createElement("div");
-      row.style.display = "flex";
-      row.style.gap = "8px";
-      row.style.alignItems = "center";
-      row.style.background = "#fff";
-      row.style.padding = "6px";
-      row.style.borderRadius = "6px";
-      row.style.border = "1px solid #d0d7de";
+      row.className = "prompt-row";
 
       const name = document.createElement("span");
+      name.className = "name";
       name.textContent = p.name;
-      name.style.fontWeight = "bold";
-      name.style.width = "120px";
-      name.style.overflow = "hidden";
-      name.style.textOverflow = "ellipsis";
-      name.style.whiteSpace = "nowrap";
 
       const text = document.createElement("span");
+      text.className = "text";
       text.textContent = p.prompt;
-      text.style.flex = "1";
-      text.style.overflow = "hidden";
-      text.style.textOverflow = "ellipsis";
-      text.style.whiteSpace = "nowrap";
-      text.style.color = "#555";
 
-      const actionsDiv = document.createElement("div");
-      actionsDiv.style.display = "flex";
-      actionsDiv.style.gap = "4px";
+      const actions = document.createElement("div");
+      actions.style.display = "flex";
+      actions.style.gap = "4px";
 
       const editBtn = document.createElement("button");
       editBtn.textContent = "✎";
       editBtn.title = "Edit";
-      editBtn.style.padding = "2px 6px";
-      editBtn.style.color = "#0969da";
-      editBtn.style.borderColor = "rgba(27, 31, 36, 0.15)";
+      editBtn.className = "btn-sm btn-link";
       editBtn.onclick = () => {
         editingIndex = index;
         newPromptName.value = p.name;
@@ -244,25 +331,19 @@ function initForm(Zotero: any) {
       const delBtn = document.createElement("button");
       delBtn.textContent = "×";
       delBtn.title = "Remove";
-      delBtn.style.padding = "2px 6px";
-      delBtn.style.color = "#cf222e";
-      delBtn.style.borderColor = "rgba(27, 31, 36, 0.15)";
-
+      delBtn.className = "btn-sm btn-danger";
       delBtn.onclick = () => {
-        if (editingIndex === index) {
-          resetForm();
-        } else if (editingIndex > index) {
-          editingIndex--;
-        }
+        if (editingIndex === index) resetPromptForm();
+        else if (editingIndex > index) editingIndex--;
         prompts.splice(index, 1);
         updatePrompts();
       };
 
-      actionsDiv.appendChild(editBtn);
-      actionsDiv.appendChild(delBtn);
+      actions.appendChild(editBtn);
+      actions.appendChild(delBtn);
       row.appendChild(name);
       row.appendChild(text);
-      row.appendChild(actionsDiv);
+      row.appendChild(actions);
       promptsList.appendChild(row);
     });
   };
@@ -278,10 +359,9 @@ function initForm(Zotero: any) {
     const name = newPromptName.value.trim();
     const prompt = newPromptText.value.trim();
     if (!name || !prompt) return;
-
     if (editingIndex >= 0 && editingIndex < prompts.length) {
       prompts[editingIndex] = { name, prompt };
-      resetForm();
+      resetPromptForm();
     } else {
       prompts.push({ name, prompt });
       newPromptName.value = "";
@@ -289,103 +369,31 @@ function initForm(Zotero: any) {
     }
     updatePrompts();
   });
-
-  cancelEditBtn.addEventListener("click", () => {
-    resetForm();
-  });
-
+  cancelEditBtn.addEventListener("click", resetPromptForm);
   renderPrompts();
 
-  apiBase.addEventListener("change", () => save("apiBase", apiBase.value.trim()));
+  // ---- Analysis Prompts ----
+  const extractionPrompt = $input("extraction-prompt") as HTMLTextAreaElement;
+  const synthesisPrompt = $input("synthesis-prompt") as HTMLTextAreaElement;
 
-  // Event listeners for saving prefs
-  providerSelect.addEventListener("change", () => {
-    updateProviderUI();
-    save("provider", providerSelect.value);
+  extractionPrompt.value = load("extractionPrompt", DEFAULT_EXTRACTION_PROMPT);
+  synthesisPrompt.value = load("synthesisPrompt", DEFAULT_SYNTHESIS_PROMPT);
+
+  extractionPrompt.addEventListener("input", () => save("extractionPrompt", extractionPrompt.value));
+  synthesisPrompt.addEventListener("input", () => save("synthesisPrompt", synthesisPrompt.value));
+
+  $("reset-extraction-prompt").addEventListener("click", () => {
+    extractionPrompt.value = DEFAULT_EXTRACTION_PROMPT;
+    save("extractionPrompt", DEFAULT_EXTRACTION_PROMPT);
   });
-
-  modelSelect.addEventListener("change", () => {
-    if (modelSelect.value === "__custom__") {
-      // Show custom input when "Custom..." is selected
-      modelInput.style.display = "block";
-      modelInput.focus();
-    } else {
-      // Hide custom input and save selected model
-      modelInput.style.display = "none";
-      save("model", modelSelect.value);
-    }
-  });
-
-  modelInput.addEventListener("input", () => {
-    save("model", modelInput.value);
-  });
-
-  apiKey.addEventListener("change", () => save("apiKey", apiKey.value.trim()));
-  chatHeight.addEventListener("change", () => save("chatHeight", chatHeight.value.trim()));
-  // customPrompts listener removed as it's handled by updatePrompts
-
-  testBtn.addEventListener("click", async () => {
-    status.textContent = "Testing...";
-    status.style.color = "#555";
-    try {
-      const selectedProvider = providerSelect.value;
-      const provider = getProvider(selectedProvider);
-      const providerConfig = PROVIDERS.find(p => p.id === selectedProvider);
-
-      if (!providerConfig) {
-        throw new Error("Invalid provider selected");
-      }
-
-      // Get current model value based on input type
-      const currentModel = providerConfig.usesDropdown ? modelSelect.value.trim() : modelInput.value.trim();
-
-      if (!currentModel) {
-        throw new Error("Please enter a model name");
-      }
-
-      // Build endpoint using provider
-      const endpoint = provider.buildEndpoint({
-        apiBase: apiBase.value.trim(),
-        apiKey: apiKey.value.trim(),
-        model: currentModel,
-      }, false);
-
-      // Format a simple test message
-      const testContents = [{
-        role: "user" as const,
-        parts: [{ text: `Ping from Zotero ${providerConfig.name} Chat preferences.` }]
-      }];
-
-      const payload = provider.formatRequest(testContents, currentModel);
-
-      // Prepare headers
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-
-      // OpenAI-compatible providers use Authorization header
-      if (selectedProvider !== "gemini") {
-        headers["Authorization"] = `Bearer ${apiKey.value.trim()} `;
-      }
-
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`${res.status} ${res.statusText}: ${text} `);
-      }
-      status.textContent = "OK";
-      status.style.color = "#2e7d32";
-    } catch (e: any) {
-      status.textContent = `Failed: ${e?.message || e} `;
-      status.style.color = "#b3261e";
-    }
+  $("reset-synthesis-prompt").addEventListener("click", () => {
+    synthesisPrompt.value = DEFAULT_SYNTHESIS_PROMPT;
+    save("synthesisPrompt", DEFAULT_SYNTHESIS_PROMPT);
   });
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  initTabs();
   const Zotero = getZotero();
   if (!Zotero) {
     const status = document.getElementById("test-status");
@@ -394,4 +402,3 @@ window.addEventListener("DOMContentLoaded", () => {
   }
   initForm(Zotero);
 });
-

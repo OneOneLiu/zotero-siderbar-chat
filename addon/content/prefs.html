@@ -5,68 +5,147 @@
   <meta charset="UTF-8" />
   <title>Zotero Sidebar Chat Settings</title>
   <style>
+    * { box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-        Arial, sans-serif;
-      padding: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      padding: 0;
       margin: 0;
-      color: #111;
-      background-color: #f3f4f6;
+      color: #333;
+      background: transparent;
     }
 
+    /* ---- Tab bar ---- */
+    .tab-bar {
+      display: flex;
+      background: transparent;
+      border-bottom: 1px solid #d4d4d4;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 10px 0;
+      text-align: center;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: #666;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tab-btn:hover { color: #333; }
+    .tab-btn.active {
+      color: #007AFF;
+      border-bottom-color: #007AFF;
+    }
+
+    /* ---- Tab panels ---- */
+    .tab-panel { display: none; padding: 16px; }
+    .tab-panel.active { display: block; }
+
+    /* ---- Section cards ---- */
+    .section {
+      background: transparent;
+      border-radius: 0;
+      border: none;
+      border-bottom: 1px solid #d4d4d4;
+      padding: 0 0 14px 0;
+      margin-bottom: 14px;
+    }
+    .section:last-child { border-bottom: none; }
+    .section-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #333;
+      margin: 0 0 12px 0;
+      padding-bottom: 0;
+      border-bottom: none;
+    }
+
+    /* ---- Fields ---- */
     .field {
       display: flex;
       flex-direction: column;
       gap: 4px;
       margin-bottom: 12px;
     }
+    .field:last-child { margin-bottom: 0; }
 
     label {
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
-      color: #333;
+      color: #555;
     }
 
-    input,
-    select {
-      padding: 8px 10px;
-      border: 1px solid #d0d7de;
-      border-radius: 6px;
+    .hint {
+      font-size: 11px;
+      color: #888;
+      margin-top: 2px;
+      line-height: 1.4;
+    }
+
+    input, select, textarea {
+      padding: 6px 8px;
+      border: 1px solid #c4c4c4;
+      border-radius: 4px;
       font-size: 13px;
-      background-color: #fff;
+      background: #fff;
+      color: #333;
+      font-family: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
-
-    input:focus,
-    select:focus {
-      border-color: #0969da;
+    input:focus, select:focus, textarea:focus {
+      border-color: #007AFF;
       outline: none;
-      box-shadow: 0 0 0 2px rgba(9, 105, 218, 0.3);
+      box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.12);
     }
 
-    .actions {
+    textarea {
+      resize: vertical;
+      min-height: 80px;
+      line-height: 1.5;
+      font-size: 12px;
+    }
+
+    /* ---- Buttons ---- */
+    button {
+      padding: 5px 14px;
+      border: 1px solid #c4c4c4;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #f0f0f0;
+      color: #333;
+      font-weight: 500;
+      font-size: 13px;
+      transition: all 0.15s;
+    }
+    button:hover { background: #e4e4e4; }
+
+    .btn-primary {
+      background: #007AFF;
+      color: #fff;
+      border-color: #007AFF;
+    }
+    .btn-primary:hover { background: #0066d6; }
+
+    .btn-sm {
+      padding: 3px 10px;
+      font-size: 12px;
+    }
+
+    .btn-danger { color: #d32f2f; }
+    .btn-link { color: #007AFF; border: none; background: none; padding: 3px 8px; }
+    .btn-link:hover { background: none; text-decoration: underline; }
+
+    /* ---- Test status ---- */
+    .test-row {
       display: flex;
       align-items: center;
       gap: 12px;
-      margin-top: 16px;
     }
-
-    button {
-      padding: 6px 14px;
-      border: 1px solid rgba(27, 31, 36, 0.15);
-      border-radius: 6px;
-      cursor: pointer;
-      background-color: #f6f8fa;
-      color: #24292f;
-      font-weight: 500;
-      font-size: 13px;
-      transition: 0.2s;
-    }
-
-    button:hover {
-      background-color: #f3f4f6;
-      border-color: rgba(27, 31, 36, 0.15);
-    }
-
     #test-status {
       font-size: 12px;
       flex: 1;
@@ -74,57 +153,182 @@
       word-break: break-all;
       line-height: 1.4;
     }
+
+    /* ---- Prompt list ---- */
+    .prompt-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      background: #fff;
+      padding: 6px 10px;
+      border-radius: 4px;
+      border: 1px solid #c4c4c4;
+      margin-bottom: 6px;
+    }
+    .prompt-row .name {
+      font-weight: 600;
+      font-size: 12px;
+      width: 100px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .prompt-row .text {
+      flex: 1;
+      font-size: 12px;
+      color: #636366;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .prompt-add-row {
+      display: flex;
+      gap: 6px;
+      align-items: flex-start;
+    }
+
+    /* ---- Inline row ---- */
+    .inline-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    /* ---- Reset button ---- */
+    .reset-link {
+      font-size: 11px;
+      color: #888;
+      cursor: pointer;
+      border: none;
+      background: none;
+      padding: 0;
+      text-decoration: underline;
+      float: right;
+      margin-top: -2px;
+    }
+    .reset-link:hover { color: #007AFF; background: none; }
   </style>
 </head>
 
 <body>
-  <!-- Provider Selection -->
-  <div class="field">
-    <label for="provider">AI Provider</label>
-    <select id="provider">
-      <!-- Populated by prefs.js -->
-    </select>
+
+  <!-- Tab Bar -->
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="basic">Basic Settings</button>
+    <button class="tab-btn" data-tab="prompts">Quick Prompts</button>
+    <button class="tab-btn" data-tab="analysis">Multi-paper Analysis</button>
   </div>
 
-  <!-- API Base URL -->
-  <div class="field">
-    <label for="api-base">API Base URL</label>
-    <input id="api-base" type="text" placeholder="https://..." />
-  </div>
-  <!-- Model Selection (dynamic: dropdown for Gemini, text input for others) -->
-  <div class="field">
-    <label for="model">Model</label>
-    <select id="model-select" style="display: none;">
-      <!-- Populated for Gemini -->
-    </select>
-    <input id="model-input" type="text" placeholder="Enter model name (e.g., gpt-4o)" style="display: none;" />
-  </div>
-  <div class="field">
-    <label for="chat-height">Chat Window Height (px)</label>
-    <input id="chat-height" type="number" placeholder="500" />
-  </div>
-  <div class="field">
-    <label for="api-key">API Key</label>
-    <input id="api-key" type="password" placeholder="Your API key" />
-  </div>
-  <div class="field">
-    <label>Custom Prompts</label>
-    <div id="prompts-list" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
-      <!-- Prompts will be rendered here -->
+  <!-- ========== Tab 1: Basic Settings ========== -->
+  <div id="tab-basic" class="tab-panel active">
+
+    <div class="section">
+      <div class="section-title">AI Provider & Model</div>
+      <div class="field">
+        <label for="provider">Provider</label>
+        <select id="provider"></select>
+      </div>
+      <div class="field">
+        <label for="api-base">API Base URL</label>
+        <input id="api-base" type="text" placeholder="https://..." />
+      </div>
+      <div class="field">
+        <label for="model">Model</label>
+        <select id="model-select" style="display:none;"></select>
+        <input id="model-input" type="text" placeholder="Enter model name" style="display:none;" />
+      </div>
+      <div class="field">
+        <label for="api-key">API Key</label>
+        <input id="api-key" type="password" placeholder="Your API key" />
+      </div>
+      <div class="test-row">
+        <button id="test-btn" class="btn-primary btn-sm" type="button">Test Connection</button>
+        <div id="test-status"></div>
+      </div>
     </div>
 
-    <div style="display: flex; gap: 8px; align-items: flex-start;">
-      <input id="new-prompt-name" type="text" placeholder="Name (e.g. Summarize)" style="width: 120px;" />
-      <input id="new-prompt-text" type="text" placeholder="Prompt content..." style="flex: 1;" />
-      <button id="add-prompt-btn" type="button" style="padding: 8px 12px;">Add</button>
-      <button id="cancel-edit-btn" type="button" style="padding: 8px 12px; display: none;">Cancel</button>
+    <div class="section">
+      <div class="section-title">Display</div>
+      <div class="field">
+        <label for="chat-height">Chat Window Height (px)</label>
+        <input id="chat-height" type="number" placeholder="500" style="width:120px;" />
+      </div>
     </div>
-    <!-- Hidden input to store the actual JSON -->
-    <input id="custom-prompts" type="hidden" />
+
   </div>
-  <div class="actions">
-    <button id="test-btn" type="button">Test Connection</button>
-    <div id="test-status"></div>
+
+  <!-- ========== Tab 2: Quick Prompts ========== -->
+  <div id="tab-prompts" class="tab-panel">
+
+    <div class="section">
+      <div class="section-title">Custom Quick Prompts</div>
+      <div class="hint" style="margin-top:-8px;margin-bottom:10px;">
+        Quick prompts appear as buttons in the sidebar chat. Click to send them instantly.
+      </div>
+      <div id="prompts-list"></div>
+      <div class="prompt-add-row">
+        <input id="new-prompt-name" type="text" placeholder="Name" style="width:100px;" />
+        <input id="new-prompt-text" type="text" placeholder="Prompt content..." style="flex:1;" />
+        <button id="add-prompt-btn" class="btn-primary btn-sm" type="button">Add</button>
+        <button id="cancel-edit-btn" class="btn-sm" type="button" style="display:none;">Cancel</button>
+      </div>
+      <input id="custom-prompts" type="hidden" />
+    </div>
+
+  </div>
+
+  <!-- ========== Tab 3: Multi-paper Analysis ========== -->
+  <div id="tab-analysis" class="tab-panel">
+
+    <div class="section">
+      <div class="section-title">Extraction Settings</div>
+      <div class="field">
+        <label>Extraction Model (per-paper)</label>
+        <select id="extraction-model-select" style="display:none;"></select>
+        <input id="extraction-model-input" type="text" placeholder="Custom model name" style="display:none;" />
+        <div class="hint">Model for extracting info from each paper individually. "Same as main model" uses the model set in Basic Settings.</div>
+      </div>
+      <div class="field">
+        <label for="concurrency">Concurrency</label>
+        <select id="concurrency" style="width:160px;">
+          <option value="1">1 (Sequential)</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4" selected>4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+          <option value="8">8</option>
+        </select>
+        <div class="hint">Number of papers to extract simultaneously.</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">
+        Per-paper Extraction Prompt
+        <button class="reset-link" id="reset-extraction-prompt">Reset to default</button>
+      </div>
+      <div class="hint" style="margin-top:-8px;margin-bottom:8px;">
+        This prompt is sent to the AI for each paper to extract structured information. Use <code>{question}</code> as a placeholder for the user's research question.
+      </div>
+      <div class="field">
+        <textarea id="extraction-prompt" rows="10"></textarea>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">
+        Synthesis Prompt
+        <button class="reset-link" id="reset-synthesis-prompt">Reset to default</button>
+      </div>
+      <div class="hint" style="margin-top:-8px;margin-bottom:8px;">
+        After all papers are extracted, this prompt drives the cross-paper synthesis. Use <code>{question}</code> for the user's question and <code>{count}</code> for the number of papers.
+      </div>
+      <div class="field">
+        <textarea id="synthesis-prompt" rows="10"></textarea>
+      </div>
+    </div>
+
   </div>
 
   <script src="scripts/prefs.js"></script>
