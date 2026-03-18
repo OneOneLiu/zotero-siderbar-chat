@@ -323,6 +323,26 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
           .gemini-chat-bubble p { margin: 0 0 8px 0; }
           .gemini-chat-bubble p:last-child { margin: 0; }
           
+          .gemini-chat-bubble pre {
+            background: rgba(0,0,0,0.05);
+            padding: 10px;
+            border-radius: 6px;
+            overflow-x: auto;
+          }
+          .gemini-chat-bubble code {
+            font-family: Consolas, Monaco, 'Courier New', monospace;
+            background: rgba(0,0,0,0.05);
+            padding: 2px 4px;
+            border-radius: 4px;
+          }
+          .gemini-chat-bubble pre code {
+            background: transparent;
+            padding: 0;
+          }
+          .gemini-chat-bubble.user pre, .gemini-chat-bubble.user code {
+            background: rgba(255,255,255,0.2); 
+          }
+          
           /* Save Button */
           .gemini-chat-save-btn {
             position: absolute;
@@ -896,6 +916,10 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
     body.appendChild(wrapper);
 
     const renderMessages = () => {
+      // Check if user is near the bottom BEFORE clearing the list
+      // A small pixel margin (20px) allows for slight scroll variations
+      const isAtBottom = messageList.scrollHeight - messageList.scrollTop - messageList.clientHeight < 20;
+
       messageList.innerHTML = "";
       messages.forEach((m, index) => {
         const bubble = createElement("div");
@@ -972,7 +996,9 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
         messageList.appendChild(loadingBubble);
       }
 
-      messageList.scrollTop = messageList.scrollHeight;
+      if (isAtBottom || messages.length === 0) {
+        messageList.scrollTop = messageList.scrollHeight;
+      }
     };
 
     renderMessages();
@@ -1359,8 +1385,11 @@ async function saveFullSessionToNote(item: Zotero.Item, messages: ChatMessage[],
       timestampHtml = `<p class="gemini-chat-timestamp" style="color:#888; font-size:0.8em; margin-bottom:0;">[${timeStr}]</p>`;
     }
 
+    const encodedMd = typeof btoa !== "undefined" ? btoa(encodeURIComponent(m.text)) : "";
+
     html += `${timestampHtml}<p><strong>${role}:</strong></p>
     ${content}
+    <!-- RAW_MD: ${encodedMd} -->
     <hr/>`;
   });
 
@@ -1384,12 +1413,17 @@ async function saveToNote(item: Zotero.Item, question: string, answer: string) {
   const qHtml = getMarkdown().render(question);
   const aHtml = getMarkdown().render(answer);
 
+  const qEncoded = typeof btoa !== "undefined" ? btoa(encodeURIComponent(question)) : "";
+  const aEncoded = typeof btoa !== "undefined" ? btoa(encodeURIComponent(answer)) : "";
+
   note.setNote(`<h2>Chat History</h2>
 <p><strong>User:</strong></p>
 ${qHtml}
+<!-- RAW_MD: ${qEncoded} -->
 <hr/>
 <p><strong>Gemini:</strong></p>
-${aHtml}`);
+${aHtml}
+<!-- RAW_MD: ${aEncoded} -->`);
 
   await note.saveTx();
   Zotero.debug(`[GeminiChat] Note saved to item ${parentID}`);
@@ -1442,10 +1476,13 @@ function parseHistoryFromNote(html: string): ChatMessage[] {
     }
 
     if (role && text) {
-      // Clean up common wrapper if present (though split might leave some)
-      // The text is HTML. We can just use it as is for now since the view expects HTML-ish
-      // or markdown.
-      // The current view renders markdown. If we pass HTML, markdown-it preserves it.
+      const rawMatch = chunk.match(/<!-- RAW_MD:\s*(.*?)\s*-->/);
+      if (rawMatch && rawMatch[1]) {
+        try {
+          text = decodeURIComponent(atob(rawMatch[1]));
+        } catch(e) { }
+      }
+
       messages.push({
         role,
         text,
