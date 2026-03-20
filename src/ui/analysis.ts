@@ -32,6 +32,15 @@ let IOUtils: any = null;
 function ensureGlobals() {
   if (!Zotero) Zotero = getZotero();
   if (!IOUtils) IOUtils = getIOUtils();
+  // Expose resolved globals on window so that imported ragIndex.ts functions
+  // (which use bare Zotero/IOUtils/PathUtils globals) can access them in this iframe context.
+  const w = window as any;
+  if (Zotero && !w.Zotero) w.Zotero = Zotero;
+  if (IOUtils && !w.IOUtils) w.IOUtils = IOUtils;
+  // PathUtils is used by ragIndex.ts for file path operations
+  if (!w.PathUtils) {
+    w.PathUtils = w.parent?.PathUtils || w.opener?.PathUtils || w.top?.PathUtils;
+  }
   if (!Zotero) throw new Error("Zotero is not available. Please reopen this window from the Zotero context menu.");
 }
 
@@ -75,7 +84,12 @@ function getSettings() {
     doubao: "https://ark.cn-beijing.volces.com/api/v3",
   };
   const concurrencyStr = (Z.Prefs.get(`${pfx}.concurrency`, true) as string) || "4";
-  const mainModel = (Z.Prefs.get(`${pfx}.model`, true) as string) || "gemini-1.5-flash-latest";
+  const defaultModels: Record<string, string> = {
+    gemini: "gemini-1.5-flash-latest",
+    deepseek: "deepseek-chat",
+    doubao: "doubao-seed-1-6-flash-250615",
+  };
+  const mainModel = (Z.Prefs.get(`${pfx}.model`, true) as string) || defaultModels[provider] || "gemini-1.5-flash-latest";
   const extractionModelPref = (Z.Prefs.get(`${pfx}.extractionModel`, true) as string) || "__same__";
   const extractionModel = (!extractionModelPref || extractionModelPref === "__same__" || extractionModelPref === "__custom__")
     ? mainModel : extractionModelPref;
@@ -119,9 +133,8 @@ async function getPdfBase64(item: any): Promise<{ mimeType: string; data: string
     const bytes = await IOUtils.read(path);
     const u8 = new Uint8Array(bytes);
     let bin = "";
-    for (let i = 0; i < u8.byteLength; i += 8192) {
-      // @ts-ignore
-      bin += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + 8192, u8.byteLength)));
+    for (let i = 0; i < u8.byteLength; i++) {
+      bin += String.fromCharCode(u8[i]);
     }
     return { mimeType: "application/pdf", data: btoa(bin) };
   } catch (_e) { return null; }
@@ -283,14 +296,38 @@ async function* callAIStream(s: ReturnType<typeof getSettings>, contents: any[],
 
 // ---------- Context building ----------
 
-function getCheckedPaperIds(): number[] {
-  const items = document.querySelectorAll(".paper-check-item.selected");
-  return Array.from(items).map(el => parseInt((el as HTMLElement).getAttribute("data-paper-id") || "0", 10)).filter(id => id > 0);
+// ---------- RAG query rewriting ----------
+
+const HAS_NON_LATIN_RE = /[^\u0000-\u024F\u1E00-\u1EFF]/;
+
+async function rewriteQueryForSearch(settings: ReturnType<typeof getSettings>, userQuery: string): Promise<string> {
+  // If query is purely Latin-based, use it directly
+  if (!HAS_NON_LATIN_RE.test(userQuery)) return userQuery;
+
+  // Use a lightweight AI call to extract English search keywords
+  try {
+    const prompt = `Extract English academic search keywords from the following query. Return ONLY the keywords separated by spaces, no explanation, no punctuation. If the query is about a concept, include the English term and closely related terms.\n\nQuery: ${userQuery}`;
+    const contents = [{ role: "user" as const, parts: [{ text: prompt }] }];
+    const keywords = await callAI(settings, contents, settings.extractionModel);
+    const cleaned = keywords.trim().replace(/[,;.，；。、\n]/g, " ").replace(/\s+/g, " ");
+    if (cleaned.length > 0 && cleaned.length < 500) {
+      return `${cleaned} ${userQuery}`;
+    }
+  } catch (_) { /* fall through to original query */ }
+
+  return userQuery;
 }
 
-async function buildContextParts(settings: ReturnType<typeof getSettings>, userQuery: string): Promise<any[]> {
+// ---------- Context building ----------
+
+function getCheckedPaperIds(): number[] {
+  return papers.map(p => p.id);
+}
+
+async function buildContextParts(settings: ReturnType<typeof getSettings>, userQuery: string): Promise<{ parts: any[]; ragInfo: string }> {
   const checkedIds = getCheckedPaperIds();
   const parts: any[] = [];
+  let ragInfo = "";
 
   if (analysisDoc) {
     parts.push({ text: `[Previous Analysis Summary]\n\n${analysisDoc}` });
@@ -302,29 +339,48 @@ async function buildContextParts(settings: ReturnType<typeof getSettings>, userQ
       const idx = ragIndices.get(pid) || await ensureRagForPaper(pid);
       if (idx) indices.push(idx);
     }
+    updateRagStatusIndicators();
 
     if (indices.length > 0) {
-      const results = searchChunks(userQuery, indices, settings.ragChunksPerQuery);
+      const totalChunks = indices.reduce((s, idx) => s + idx.chunks.length, 0);
+
+      // Rewrite query for cross-language search
+      const searchQuery = await rewriteQueryForSearch(settings, userQuery);
+      const results = searchChunks(searchQuery, indices, settings.ragChunksPerQuery);
+
+      const queryNote = searchQuery !== userQuery ? ` (expanded: "${searchQuery.substring(0, 80)}...")` : "";
+
       if (results.length > 0) {
-        const grouped: Record<string, string[]> = {};
+        const grouped: Record<string, { section: string; text: string; score: number }[]> = {};
         for (const r of results) {
-          const key = r.paperTitle;
-          if (!grouped[key]) grouped[key] = [];
-          const sectionTag = r.section ? ` [${r.section}]` : "";
-          grouped[key].push(`${sectionTag}\n${r.text}`);
+          if (!grouped[r.paperTitle]) grouped[r.paperTitle] = [];
+          grouped[r.paperTitle].push({ section: r.section, text: r.text, score: r.score });
         }
 
-        let contextText = "[Retrieved passages from selected papers]\n\n";
+        let contextText = `[RAG Context — ${results.length} original passages retrieved from ${Object.keys(grouped).length} paper(s)]\n`;
+        contextText += `The following are ORIGINAL text passages extracted directly from the papers' full text, retrieved via keyword search based on the user's question. These are raw source materials, not summaries.\n\n`;
+
+        let passageNum = 0;
         for (const [title, passages] of Object.entries(grouped)) {
-          contextText += `### ${title}\n\n`;
-          contextText += passages.join("\n\n---\n\n") + "\n\n";
+          contextText += `=== Paper: ${title} ===\n\n`;
+          for (const p of passages) {
+            passageNum++;
+            const sectionLabel = p.section ? ` | Section: ${p.section}` : "";
+            contextText += `--- Passage ${passageNum}${sectionLabel} ---\n${p.text}\n\n`;
+          }
         }
+
         parts.push({ text: contextText });
+        ragInfo = `🔍 RAG: ${results.length} passages from ${Object.keys(grouped).length} paper(s) (searched ${totalChunks} chunks)${queryNote}`;
+      } else {
+        ragInfo = `🔍 RAG: no matching passages found (searched ${totalChunks} chunks across ${indices.length} paper(s))${queryNote}`;
       }
+    } else {
+      ragInfo = `⚠️ RAG: no indices available (0/${checkedIds.length} papers indexed)`;
     }
   }
 
-  return parts;
+  return { parts, ragInfo };
 }
 
 // ---------- Save helpers ----------
@@ -480,6 +536,36 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
 
   if (allPdfs.length === 0) throw new Error("No PDF attachments found.");
 
+  // === Phase 1: Build RAG indices (local only, no API calls) ===
+  const ragBubble = addMessageBubble("system", "");
+  try {
+    await ensureRagDir();
+    let ragBuilt = 0, ragCached = 0, ragFailed = 0;
+    for (let i = 0; i < papers.length; i++) {
+      const p = papers[i];
+      const alreadyReady = ragIndices.has(p.id) || await hasRagIndex(p.id);
+      ragBubble.innerHTML = `<strong>🔍 Preparing search index — ${i + 1}/${papers.length}</strong><br>` +
+        (alreadyReady ? `📦 Loading: ${esc(p.title)}` : `🔨 Building: ${esc(p.title)}`);
+      scrollToBottom();
+      try {
+        await ensureRagForPaper(p.id);
+        if (alreadyReady) ragCached++; else ragBuilt++;
+      } catch (_) {
+        ragFailed++;
+      }
+      await updateRagStatusIndicators();
+    }
+    const ragParts: string[] = [];
+    if (ragCached > 0) ragParts.push(`${ragCached} cached`);
+    if (ragBuilt > 0) ragParts.push(`${ragBuilt} newly built`);
+    if (ragFailed > 0) ragParts.push(`${ragFailed} failed`);
+    ragBubble.innerHTML = `✅ Search index ready — ${ragParts.join(", ")}`;
+  } catch (e) {
+    ragBubble.innerHTML = `⚠️ Search index build error. Continuing without RAG support.`;
+  }
+  scrollToBottom();
+
+  // === Phase 2: Per-paper extraction (AI calls) ===
   const CONCURRENCY = Math.min(settings.concurrency, allPdfs.length);
   const progressBubble = addMessageBubble("system", "");
   const extractions: string[] = new Array(allPdfs.length).fill("");
@@ -553,7 +639,13 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
     workers.push((async () => {
       while (queue.length > 0) {
         const idx = queue.shift()!;
-        await extractOne(idx);
+        try {
+          await extractOne(idx);
+        } catch (e: any) {
+          extractions[idx] = `# Paper ${idx + 1}: ${allPdfs[idx].title}\n\n*Worker error: ${e?.message || e}*`;
+          pStatus[idx] = "failed";
+          updateProgress();
+        }
         await delay(500);
       }
     })());
@@ -566,18 +658,9 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
   chatHistory.push({ role: "user", text: userPrompt });
   await saveAnalysisNote();
 
-  // Build RAG indices in background (local only, no API calls)
-  progressBubble.innerHTML = `✅ All ${allPdfs.length} papers extracted. Building search index...`;
-  scrollToBottom();
-  try {
-    await buildRagIndicesForPapers(papers.map(p => p.id));
-    updateRagStatusIndicators();
-  } catch (_) { /* non-critical */ }
-
+  // === Phase 3: Synthesis ===
   progressBubble.innerHTML = `✅ All ${allPdfs.length} papers extracted. Synthesizing...`;
   scrollToBottom();
-
-  await delay(2000);
 
   const synthPrompt = settings.synthesisPrompt
     .replace(/\{question\}/g, userPrompt)
@@ -610,7 +693,13 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
 // ---------- Follow-up message ----------
 
 async function handleFollowUp(userPrompt: string, settings: ReturnType<typeof getSettings>) {
-  const contextParts = await buildContextParts(settings, userPrompt);
+  const { parts: contextParts, ragInfo } = await buildContextParts(settings, userPrompt);
+
+  // Show RAG search status to user
+  if (ragInfo) {
+    addMessageBubble("system", esc(ragInfo));
+    scrollToBottom();
+  }
 
   const contents: any[] = [];
   for (const msg of chatHistory) {
@@ -692,17 +781,14 @@ async function handleSend() {
 
 async function updateRagStatusIndicators() {
   for (const p of papers) {
-    const item = document.querySelector(`.paper-check-item[data-paper-id="${p.id}"]`);
-    if (!item) continue;
-    let dot = item.querySelector(".rag-status-dot") as HTMLElement;
-    if (!dot) {
-      dot = document.createElement("span");
-      dot.className = "rag-status-dot";
-      item.appendChild(dot);
+    const dot = document.querySelector(`[data-rag-id="${p.id}"]`) as HTMLElement;
+    if (!dot) continue;
+    let has = ragIndices.has(p.id);
+    if (!has) {
+      try { has = await hasRagIndex(p.id); } catch (_) { has = false; }
     }
-    const has = ragIndices.has(p.id) || await hasRagIndex(p.id);
-    dot.style.background = has ? "#34a853" : "#d1d5db";
-    dot.title = has ? "RAG index ready" : "No RAG index";
+    dot.style.background = has ? "#007AFF" : "#d1d5db";
+    dot.title = has ? "RAG index ready" : "No RAG index yet";
   }
 }
 
@@ -739,10 +825,7 @@ function init() {
       item.className = "paper-check-item";
       item.setAttribute("data-paper-id", String(p.id));
       item.title = p.title;
-      item.innerHTML = `<span class="paper-check-dot"></span><span class="paper-check-label">${i + 1}. ${esc(p.title)}</span>`;
-      item.addEventListener("click", () => {
-        item.classList.toggle("selected");
-      });
+      item.innerHTML = `<span class="paper-check-label">${i + 1}. ${esc(p.title)}</span><span class="rag-status-dot" data-rag-id="${p.id}"></span>`;
       list.appendChild(item);
     });
   }
@@ -760,7 +843,7 @@ function init() {
   });
 
   if (papers.length > 0) {
-    addMessageBubble("system", `${papers.length} paper(s) loaded. Type your research question to start the analysis. Select papers on the left to include relevant passages (via RAG) in follow-up questions.`);
+    addMessageBubble("system", `${papers.length} paper(s) loaded. Type your research question to start the analysis. Follow-up questions will automatically search all papers via RAG.`);
     updateRagStatusIndicators();
   }
 

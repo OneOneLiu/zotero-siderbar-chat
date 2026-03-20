@@ -3,6 +3,10 @@ import { RagIndex, ScoredChunk, tokenize } from "./ragIndex";
 const BM25_K1 = 1.2;
 const BM25_B = 0.75;
 
+// Relevance thresholds to filter out low-quality matches
+const MIN_ABSOLUTE_SCORE = 0.5;    // chunks below this are always irrelevant
+const MIN_RELATIVE_SCORE = 0.25;   // chunks below 25% of the top score are filtered
+
 export function searchChunks(query: string, indices: RagIndex[], topK: number = 15): ScoredChunk[] {
   const queryTerms = tokenize(query);
   if (queryTerms.length === 0 || indices.length === 0) return [];
@@ -63,5 +67,13 @@ export function searchChunks(query: string, indices: RagIndex[], topK: number = 
   }
 
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, topK);
+
+  if (scored.length === 0) return [];
+
+  // Apply relevance threshold: max(absolute_min, relative_to_top_score)
+  const maxScore = scored[0].score;
+  const threshold = Math.max(MIN_ABSOLUTE_SCORE, maxScore * MIN_RELATIVE_SCORE);
+  const filtered = scored.filter(s => s.score >= threshold);
+
+  return filtered.slice(0, topK);
 }

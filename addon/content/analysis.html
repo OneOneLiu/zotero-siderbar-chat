@@ -43,27 +43,6 @@
       padding: 8px 10px;
       border-radius: 8px;
       margin-bottom: 4px;
-      cursor: pointer;
-      transition: all 0.15s;
-      border: 1px solid transparent;
-      user-select: none;
-    }
-    .paper-check-item:hover { background: #f0f5ff; }
-    .paper-check-item.selected {
-      background: #e8f0fe;
-      border-color: #007AFF;
-    }
-    .paper-check-dot {
-      width: 8px;
-      height: 8px;
-      min-width: 8px;
-      border-radius: 50%;
-      background: #d1d5db;
-      transition: background 0.15s;
-      flex-shrink: 0;
-    }
-    .paper-check-item.selected .paper-check-dot {
-      background: #007AFF;
     }
     .rag-status-dot {
       width: 6px;
@@ -73,7 +52,7 @@
       background: #d1d5db;
       margin-left: auto;
       flex-shrink: 0;
-      transition: background 0.15s;
+      transition: background 0.3s;
     }
     .paper-check-label {
       font-size: 12px;
@@ -204,7 +183,7 @@
   <div class="sidebar">
     <div class="sidebar-header">📊 Context Papers</div>
     <div id="paper-check-list" class="paper-check-list"></div>
-    <div class="sidebar-hint">Checked papers will have their full text included as context for follow-up questions.</div>
+    <div class="sidebar-hint">All papers are automatically searched via RAG for follow-up questions.</div>
   </div>
   <div class="main">
     <div id="chat-messages" class="chat-messages"></div>

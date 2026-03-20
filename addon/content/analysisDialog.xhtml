@@ -9,10 +9,11 @@
     flex="1" />
   <script type="application/javascript"><![CDATA[
     window.addEventListener("load", function() {
-      // Grab Zotero and IOUtils from the opener (main Zotero window)
+      // Grab Zotero, IOUtils, and PathUtils from the opener (main Zotero window)
       if (window.opener) {
         window.Zotero = window.opener.Zotero;
         window.IOUtils = window.opener.IOUtils;
+        window.PathUtils = window.opener.PathUtils;
       }
 
       var params = "";

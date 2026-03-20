@@ -288,7 +288,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
   }
 
   try {
-    const itemKey = item?.id ? String(item.id) : "global";
+    const itemKey = String(item.id);
     const messages = addon.getSession(itemKey);
     const doc = body.ownerDocument;
     const HTML_NS = "http://www.w3.org/1999/xhtml";
@@ -909,7 +909,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
           // Let's put this inside header at the bottom?
           header.appendChild(loadContainer);
         }
-      });
+      }).catch(e => Zotero.debug(`[GeminiChat] Error loading history note: ${e}`));
     }
 
     // --- Messages ---
@@ -983,9 +983,15 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
       }
     };
 
+    let _selectionTimeout: ReturnType<typeof setTimeout> | undefined;
+
     messageList.addEventListener("mouseup", (e) => {
+      // Clear any pending timeout from a previous mouseup
+      if (_selectionTimeout !== undefined) {
+        clearTimeout(_selectionTimeout);
+      }
       // Small delay to let selection settle
-      setTimeout(() => {
+      _selectionTimeout = setTimeout(() => {
         const selection = doc.getSelection();
         if (!selection || selection.isCollapsed) {
           removeToolbar();
@@ -1150,9 +1156,8 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
             metaText += `${(m.meta.duration / 1000).toFixed(1)}s`;
           }
 
-          // Only show token usage for Gemini provider AND when data is valid
-          const currentSettings = getSettings();
-          if (m.usage && currentSettings.provider === "gemini") {
+          // Show token usage when data is valid
+          if (m.usage) {
             // Check if usage data is valid (not undefined)
             if (m.usage.promptTokens !== undefined && m.usage.completionTokens !== undefined) {
               if (metaText) metaText += " | ";
@@ -1928,7 +1933,7 @@ export async function getPdfText(item: Zotero.Item): Promise<string | null> {
     // Check if PDF has been indexed using the correct constant
     // @ts-ignore
     const indexedState = await Zotero.Fulltext.getIndexedState(item);
-    // @ ts-ignore
+    // @ts-ignore
     const INDEX_STATE_INDEXED = Zotero.Fulltext.INDEX_STATE_INDEXED || 2;
 
     Zotero.debug(`[GeminiChat] PDF index status for item ${itemID}: ${indexedState} (indexed=${INDEX_STATE_INDEXED})`);
@@ -2015,13 +2020,8 @@ async function getFileData(path: string): Promise<string | null> {
 function arrayBufferToBase64(buffer: Uint8Array | ArrayBuffer | any): string {
   const bytes = new Uint8Array(buffer);
   let binary = "";
-  const len = bytes.byteLength;
-  const chunkSize = 8192;
-  for (let i = 0; i < len; i += chunkSize) {
-    const end = Math.min(i + chunkSize, len);
-    const chunk = bytes.subarray(i, end);
-    // @ts-ignore
-    binary += String.fromCharCode.apply(null, chunk);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary);
 }
@@ -2047,9 +2047,10 @@ export async function callAINonStream(settings: ReturnType<typeof getSettings>, 
   }
 
   let signal: AbortSignal | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   if (typeof AbortController !== "undefined") {
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 180000);
+    timeoutId = setTimeout(() => controller.abort(), 180000);
     signal = controller.signal;
   }
 
@@ -2059,6 +2060,7 @@ export async function callAINonStream(settings: ReturnType<typeof getSettings>, 
     body: JSON.stringify(payload),
     signal,
   });
+  if (timeoutId !== undefined) clearTimeout(timeoutId);
 
   if (!res.ok) {
     const text = await res.text();
@@ -2102,10 +2104,11 @@ export async function* callAIStream(settings: ReturnType<typeof getSettings>, co
   const payload = provider.formatRequest(contents, settings.model);
 
   let signal: AbortSignal | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   if (typeof AbortController !== "undefined") {
     const controller = new AbortController();
     // Longer timeout for streaming
-    setTimeout(() => controller.abort(), 120000);
+    timeoutId = setTimeout(() => controller.abort(), 120000);
     signal = controller.signal;
   }
 
@@ -2226,6 +2229,7 @@ export async function* callAIStream(settings: ReturnType<typeof getSettings>, co
       }
     }
   } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
     reader.releaseLock();
   }
 }

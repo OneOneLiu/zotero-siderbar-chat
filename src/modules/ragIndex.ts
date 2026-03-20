@@ -27,10 +27,10 @@ export interface ScoredChunk {
 
 // ---------- Constants ----------
 
-const RAG_VERSION = 1;
-const TARGET_CHUNK_WORDS = 400;
-const MIN_CHUNK_WORDS = 80;
-const MAX_CHUNK_WORDS = 700;
+const RAG_VERSION = 2;
+const TARGET_CHUNK_WORDS = 200;
+const MIN_CHUNK_WORDS = 50;
+const MAX_CHUNK_WORDS = 400;
 const RAG_DIR_NAME = "gemini-chat-rag";
 
 const STOP_WORDS = new Set([
@@ -248,14 +248,18 @@ export async function hasRagIndex(itemId: number): Promise<boolean> {
 // ---------- High-level: build from Zotero item ----------
 
 export async function buildRagIndexForItem(item: any): Promise<RagIndex | null> {
-  const att = item.isAttachment?.() ? item : (() => {
-    if (!item.isRegularItem?.()) return null;
+  let att = null;
+  if (item.isAttachment?.()) {
+    att = item;
+  } else if (item.isRegularItem?.()) {
     for (const id of item.getAttachments()) {
       const a = Zotero.Items.get(id);
-      if (a && !a.isNote() && a.attachmentContentType === "application/pdf") return a;
+      if (a && !a.isNote() && a.attachmentContentType === "application/pdf") {
+        att = a;
+        break;
+      }
     }
-    return null;
-  })();
+  }
 
   if (!att) return null;
 
