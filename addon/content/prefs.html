@@ -306,29 +306,67 @@
     <div class="section">
       <div class="section-title">RAG (Retrieval-Augmented Generation)</div>
       <div class="hint" style="margin-top:-8px;margin-bottom:10px;">
-        Papers are split into chunks and indexed locally. In follow-up questions, only relevant chunks are sent to the AI instead of the full text, saving tokens significantly.
+        Papers are split into chunks and indexed locally. Follow-up questions use balanced per-paper retrieval: each paper contributes 0 to N most relevant chunks, ensuring coverage across all relevant papers.
       </div>
       <div class="field">
-        <label for="rag-chunks">Chunks per query</label>
-        <select id="rag-chunks" style="width:160px;">
+        <label for="rag-per-paper">Max chunks per paper</label>
+        <select id="rag-per-paper" style="width:160px;">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3" selected>3 (default)</option>
+          <option value="4">4</option>
           <option value="5">5</option>
-          <option value="10">10</option>
-          <option value="15" selected>15 (default)</option>
-          <option value="20">20</option>
-          <option value="25">25</option>
-          <option value="30">30</option>
         </select>
-        <div class="hint">Number of most-relevant text chunks to retrieve per follow-up question. More chunks = more context but higher token cost.</div>
+        <div class="hint">Maximum chunks retrieved from each paper. Papers with low relevance contribute 0 chunks. Ensures balanced coverage across all papers.</div>
+      </div>
+      <div class="field">
+        <label for="rag-chunks">Total chunks cap</label>
+        <select id="rag-chunks" style="width:160px;">
+          <option value="10">10</option>
+          <option value="15">15</option>
+          <option value="20">20</option>
+          <option value="30" selected>30 (default)</option>
+          <option value="40">40</option>
+          <option value="50">50</option>
+          <option value="60">60</option>
+        </select>
+        <div class="hint">Overall maximum number of chunks across all papers. Acts as a safety cap for token budget.</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Pipeline Overview</div>
+      <div class="hint" style="margin-top:-8px;margin-bottom:6px;line-height:1.6;">
+        The analysis runs in 4 phases:<br>
+        <strong>① RAG Index</strong> (local) →
+        <strong>② Question Understanding</strong> (AI) →
+        <strong>③ Per-paper Extraction</strong> (AI) →
+        <strong>④ Synthesis</strong> (AI)<br>
+        Then <strong>⑤ Follow-up Questions</strong> use RAG + chat history for continued analysis.<br>
+        Customize the prompts for phases ②③④⑤ below.
       </div>
     </div>
 
     <div class="section">
       <div class="section-title">
-        Per-paper Extraction Prompt
+        ② Question Understanding Prompt
+        <button class="reset-link" id="reset-question-understanding-prompt">Reset to default</button>
+      </div>
+      <div class="hint" style="margin-top:-8px;margin-bottom:8px;">
+        Before extracting from papers, the AI first analyzes the research question to identify core concepts, clarify ambiguities, and generate sub-questions. This understanding document guides all subsequent steps. Use <code>{question}</code> as a placeholder for the user's research question.
+      </div>
+      <div class="field">
+        <textarea id="question-understanding-prompt" rows="10"></textarea>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">
+        ③ Per-paper Extraction Prompt
         <button class="reset-link" id="reset-extraction-prompt">Reset to default</button>
       </div>
       <div class="hint" style="margin-top:-8px;margin-bottom:8px;">
-        This prompt is sent to the AI for each paper to extract structured information. Use <code>{question}</code> as a placeholder for the user's research question.
+        This prompt is sent to the AI for each paper to extract structured information, guided by the question understanding from phase ②. Use <code>{question}</code> for the user's question and <code>{understanding}</code> for the question analysis output.
       </div>
       <div class="field">
         <textarea id="extraction-prompt" rows="10"></textarea>
@@ -337,14 +375,27 @@
 
     <div class="section">
       <div class="section-title">
-        Synthesis Prompt
+        ④ Synthesis Prompt
         <button class="reset-link" id="reset-synthesis-prompt">Reset to default</button>
       </div>
       <div class="hint" style="margin-top:-8px;margin-bottom:8px;">
-        After all papers are extracted, this prompt drives the cross-paper synthesis. Use <code>{question}</code> for the user's question and <code>{count}</code> for the number of papers.
+        After all papers are extracted, this prompt drives the cross-paper synthesis with full context. Use <code>{question}</code> for the user's question, <code>{understanding}</code> for the question analysis, and <code>{count}</code> for the number of papers.
       </div>
       <div class="field">
         <textarea id="synthesis-prompt" rows="10"></textarea>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">
+        ⑤ Follow-up Question Prompt
+        <button class="reset-link" id="reset-follow-up-prompt">Reset to default</button>
+      </div>
+      <div class="hint" style="margin-top:-8px;margin-bottom:8px;">
+        After the initial analysis, this prompt wraps every follow-up question to maintain rigor and consistency. The AI receives this prompt along with the question understanding, previous analysis, RAG passages, and chat history. Use <code>{question}</code> for the user's follow-up question.
+      </div>
+      <div class="field">
+        <textarea id="follow-up-prompt" rows="10"></textarea>
       </div>
     </div>
 

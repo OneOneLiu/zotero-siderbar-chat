@@ -13,7 +13,7 @@ import {
   splitIntoChunks,
   tokenize,
 } from "../modules/ragIndex";
-import { searchChunks } from "../modules/ragSearch";
+import { searchChunksBalanced } from "../modules/ragSearch";
 
 // ---------- Globals resolution ----------
 
@@ -67,6 +67,7 @@ interface ChatMsg { role: "user" | "model" | "system"; text: string; }
 let papers: PaperInfo[] = [];
 let chatHistory: ChatMsg[] = [];
 let analysisDoc = "";
+let questionUnderstandingDoc = "";
 let busy = false;
 let savedNoteId: number | null = null;
 let ragIndices: Map<number, RagIndex> = new Map();
@@ -93,11 +94,163 @@ function getSettings() {
   const extractionModelPref = (Z.Prefs.get(`${pfx}.extractionModel`, true) as string) || "__same__";
   const extractionModel = (!extractionModelPref || extractionModelPref === "__same__" || extractionModelPref === "__custom__")
     ? mainModel : extractionModelPref;
-  const defaultExtractionPrompt = `The user's research question is:\n"""\n{question}\n"""\n\nBased on this question, read the following paper and extract:\n\n**Part A - Structured extraction** (2-4 sentences each):\n1. **Research Problem**: What problem? Limitations of existing methods?\n2. **Core Contributions**: Main contributions? (1-3)\n3. **Method Overview**: Core method? Key innovation?\n4. **Experimental Results**: Datasets? Key metrics?\n5. **Limitations**: Known limitations?\n6. **Reproducibility**: Code/data available?\n\n**Part B - Relevance to user's question**:\nHighlight parts most relevant to the user's question with specific details.\n\nUse the same language as the user's question.`;
 
-  const defaultSynthesisPrompt = `The user's research question is:\n"""\n{question}\n"""\n\nBelow are structured extractions from {count} paper(s).\n\nProvide a comprehensive analysis answering the user's question:\n\n## 1. Direct Answer\nDirectly address the question with evidence.\n\n## 2. Cross-paper Evidence Summary\nTable comparing each paper (title, method/finding, key data).\n\n## 3. Synthesis & Insights\nConnect findings across papers.\n\n## 4. Gaps & Recommendations\nWhat remains unanswered? Next steps?\n\nUse the same language as the user. Cite which paper evidence comes from.`;
+  const defaultQuestionUnderstandingPrompt = `# Role: 资深学术研究助理
 
-  const ragChunksStr = (Z.Prefs.get(`${pfx}.ragChunksPerQuery`, true) as string) || "15";
+你是一个专门针对各类学术问题进行针对性解答的AI专家。你精通研究问题的逻辑拆解和核心概念的精准界定。所有分析必须严谨、客观、无歧义。
+
+## Task: 问题解构与概念澄清
+
+用户提出了以下研究问题：
+"""
+{question}
+"""
+
+请严格按照以下步骤对该问题进行深度解析：
+
+### 1. 核心意图分析
+判断该问题的类型（概念类「是什么」/ 动机类「为什么」/ 存在类「有没有」/ 对比类「有何区别」/ 复合类），提取清晰、客观的核心诉求，理解用户真正想要知道什么。
+
+### 2. 关键词提取与概念界定
+- 提取所有核心关键词，逐一澄清和辨析，消除一切歧义。
+- 尽可能使用清晰的自然语言表述概念，能定量的必须定量（尤其是形容词或修饰性名词）。技术概念能用数学思想表述的必须用数学思想表述。
+- 检查提问中使用的词汇是否为标准学术概念。若发现非标准用词，必须指出并提供标准学术术语。
+- 对模糊概念给出一个无歧义的工作定义，作为后续分析的基准（兜底定义机制）。
+
+### 3. 衍生问题拆解
+采用"打破砂锅问到底"的原则追根溯源，罗列出一系列与问题来龙去脉相关的基本或衍生子问题：
+- 必须包含至少一个概念性子问题："什么是[X]？领域对它是否有清晰无歧义的定义？"
+- 必须包含至少一个动机性子问题："为什么要[X]？"
+- 其他帮助回答总问题的原子化子问题
+- 每个子问题应尽量短，不涉及过多概念，确保是基本的原子问题
+- 这些子问题必须能构成一条清晰的回答脉络
+
+### 4. 问题理解总结
+将以上分析凝练为一段结构化总结，严格使用如下格式：
+> "用户提出了一个关于[xxx]的问题。核心关键词包括：1.[xxx] 2.[xxx]...。其中[xxx]是无歧义的专业学术术语，[xxx]可能存在歧义需要澄清，消除歧义后的工作定义为[xxx]。综合分析，用户的核心目的是[xxx]。为全面、透彻地回答此问题，需要逐一解答以下子问题：1.[xxx] 2.[xxx]..."
+
+请使用与用户问题相同的语言输出。`;
+
+  const defaultExtractionPrompt = `# Role: 学术文献信息萃取专家
+
+你是一个精通文献信息提取和相关性判定的AI专家。你的所有分析必须百分之百基于文献原文，拒绝任何形式的幻觉和无端发散。
+
+## Context: 问题理解
+
+以下是对用户研究问题的深度分析：
+"""
+{understanding}
+"""
+
+用户的原始研究问题是：
+"""
+{question}
+"""
+
+## Task: 单文献信息萃取
+
+请针对提供的论文进行以下客观分析：
+
+### Part A: 核心要素提取（每项2-4句）
+1. **研究问题与动机**：该论文解决什么问题？现有方法有哪些局限性？
+2. **核心贡献**：主要贡献点（1-3个）
+3. **研究方法**：核心方法、关键创新点及方法大类
+4. **实验结果**：数据集、关键指标与主要发现
+5. **局限性**：已知局限（若原文未提及，标注"未提及"并分析可能原因及对解答本问题的影响）
+6. **可复现性**：代码/数据是否公开
+
+### Part B: 问题相关性锚定
+结合上述问题理解中的核心概念和子问题，判定该文献的相关性：
+- 逐一检查每个子问题，标注该文献是否包含相关信息
+- 若相关，提取具体细节和证据，注意概念定义的定量一致性
+- 若该文献与问题确实不相关，明确指出并给出理由，建议用户考虑剔除
+
+### Part C: 关键信息凝练
+将提取的核心内容及与问题相关的要点凝练成一段简短总结备用。
+
+请使用与用户问题相同的语言输出。若原文未提及某项信息，客观标注"未提及"，切勿编造。`;
+
+  const defaultSynthesisPrompt = `# Role: 多文献交叉分析与综合专家
+
+你是一个精通多文献信息交叉比对和综合分析的AI专家。你的回答必须严谨客观，所有结论必须有文献支撑。保持中立立场，仅做事实和逻辑的分析。
+
+## Context: 问题理解
+
+以下是对用户研究问题的深度分析：
+"""
+{understanding}
+"""
+
+用户的原始研究问题是：
+"""
+{question}
+"""
+
+以下是从 {count} 篇论文中提取的结构化信息。
+
+## Task: 多文献交叉比对与综合分析
+
+请严格按照以下步骤进行分析和输出：
+
+### <Thinking_Process>：交叉比对与证据网络构建
+
+1. **概念与差异对齐**：消除文献间的浅层差异（用词差异、实验场景差异等），从宏观整体的角度定位它们的核心内容。
+2. **逻辑验证与关系排查**：
+   - 围绕问题理解中的核心关键词和各个子问题展开
+   - 检查各论文对核心概念的定义和表述从定量角度是否一致
+   - 检查文献间是否相互支撑或相互矛盾
+   - 检查是否存在清晰的研究发展脉络（若无法形成，给出理由）
+3. **证据图谱构建**：围绕每个子问题进行初步回答和关系分析，形成"论点-证据链"网络。
+
+### <Final_Answer>：双版本解答输出
+
+基于以上分析，首先澄清核心概念的定义与技术脉络，然后给出两个版本的回答。两个版本都必须在第一句给出清晰的总结性答案（结论先行），随后展开有理有据的逻辑论证。
+
+**版本一：严谨学术版 (Academic Rigorous Version)**
+- 先澄清所有核心定义（是什么）和动机（为什么）
+- 用词严格符合学术规范，核心概念定义准确无歧义
+- 在此基础上形成具有清晰脉络的回答，确保逻辑严密
+- 引用具体论文作为证据来源
+
+**版本二：通俗易懂版 (Layman Accessible Version)**
+- 以直白易懂的语言澄清核心定义和动机
+- 可适当简化细节，但不能引入技术错误或歧义
+- 确保非专业读者也能理解
+
+### 注意事项
+- 如发现文献间存在矛盾或争议，必须明确指出并给出理由（批判性思维）
+- 如某些子问题无法从文献中找到答案，标注为"当前文献未覆盖"
+- 指出现有文献中的研究空白和可能的后续方向
+
+请使用与用户问题相同的语言输出，引用具体论文作为证据来源。`;
+
+  const defaultFollowUpPrompt = `# Role: 基于多文献分析的学术追问助理
+
+你是一个资深学术研究助理。你之前已经完成了对用户研究问题的深度分析（包括问题理解、单篇文献提取和多文献综合），现在用户在此基础上提出了追问。
+
+## 可用上下文
+
+你的上下文中可能包含以下信息：
+1. **问题理解文档**：对用户初始研究问题的结构化分析（核心概念定义、子问题拆解等）
+2. **之前的分析摘要**：从各篇论文中提取的结构化信息
+3. **RAG 检索段落**：根据当前追问从原始论文全文中检索到的相关原文段落
+4. **对话历史**：之前的问答记录
+
+## 回答原则
+
+1. **严格基于证据**：回答必须基于提供的文献内容和 RAG 检索结果，引用具体论文作为来源。绝对不要编造文献中没有的信息。
+2. **概念一致性**：延续之前问题理解中已经澄清的概念定义和术语，不要在追问中悄悄改变定义。
+3. **诚实标注边界**：如果提供的文献和 RAG 段落无法回答某个方面，必须明确说明"当前文献未覆盖此内容"或"提供的文献中未找到相关信息"，不要凭空推测。
+4. **批判性思维**：如发现矛盾点或争议，需明确指出并给出理由。
+5. **结论先行**：先给出清晰的结论，再展开论证。
+6. **语言一致**：使用与用户问题相同的语言回答。
+
+## 用户追问
+
+{question}`;
+
+  const ragChunksStr = (Z.Prefs.get(`${pfx}.ragChunksPerQuery`, true) as string) || "30";
+  const ragPerPaperStr = (Z.Prefs.get(`${pfx}.ragMaxChunksPerPaper`, true) as string) || "3";
   return {
     provider,
     apiBase: (Z.Prefs.get(`${pfx}.apiBase`, true) as string) || defaultBases[provider] || defaultBases.gemini,
@@ -105,9 +258,12 @@ function getSettings() {
     extractionModel,
     apiKey: (Z.Prefs.get(`${pfx}.apiKey`, true) as string) || "",
     concurrency: Math.max(1, Math.min(8, parseInt(concurrencyStr, 10) || 4)),
+    questionUnderstandingPrompt: (Z.Prefs.get(`${pfx}.questionUnderstandingPrompt`, true) as string) || defaultQuestionUnderstandingPrompt,
     extractionPrompt: (Z.Prefs.get(`${pfx}.extractionPrompt`, true) as string) || defaultExtractionPrompt,
     synthesisPrompt: (Z.Prefs.get(`${pfx}.synthesisPrompt`, true) as string) || defaultSynthesisPrompt,
-    ragChunksPerQuery: Math.max(5, Math.min(30, parseInt(ragChunksStr, 10) || 15)),
+    followUpPrompt: (Z.Prefs.get(`${pfx}.followUpPrompt`, true) as string) || defaultFollowUpPrompt,
+    ragChunksPerQuery: Math.max(5, Math.min(60, parseInt(ragChunksStr, 10) || 30)),
+    ragMaxChunksPerPaper: Math.max(1, Math.min(10, parseInt(ragPerPaperStr, 10) || 3)),
   };
 }
 
@@ -329,6 +485,10 @@ async function buildContextParts(settings: ReturnType<typeof getSettings>, userQ
   const parts: any[] = [];
   let ragInfo = "";
 
+  if (questionUnderstandingDoc) {
+    parts.push({ text: `[Question Understanding]\n\n${questionUnderstandingDoc}` });
+  }
+
   if (analysisDoc) {
     parts.push({ text: `[Previous Analysis Summary]\n\n${analysisDoc}` });
   }
@@ -346,7 +506,7 @@ async function buildContextParts(settings: ReturnType<typeof getSettings>, userQ
 
       // Rewrite query for cross-language search
       const searchQuery = await rewriteQueryForSearch(settings, userQuery);
-      const results = searchChunks(searchQuery, indices, settings.ragChunksPerQuery);
+      const results = searchChunksBalanced(searchQuery, indices, settings.ragMaxChunksPerPaper, settings.ragChunksPerQuery);
 
       const queryNote = searchQuery !== userQuery ? ` (expanded: "${searchQuery.substring(0, 80)}...")` : "";
 
@@ -357,12 +517,15 @@ async function buildContextParts(settings: ReturnType<typeof getSettings>, userQ
           grouped[r.paperTitle].push({ section: r.section, text: r.text, score: r.score });
         }
 
-        let contextText = `[RAG Context — ${results.length} original passages retrieved from ${Object.keys(grouped).length} paper(s)]\n`;
-        contextText += `The following are ORIGINAL text passages extracted directly from the papers' full text, retrieved via keyword search based on the user's question. These are raw source materials, not summaries.\n\n`;
+        const paperCount = Object.keys(grouped).length;
+        const chunkCounts = Object.entries(grouped).map(([t, cs]) => `${t}(${cs.length})`).join(", ");
+
+        let contextText = `[RAG Context — ${results.length} passages balanced across ${paperCount} paper(s), max ${settings.ragMaxChunksPerPaper}/paper]\n`;
+        contextText += `The following are ORIGINAL text passages extracted directly from the papers' full text, retrieved via balanced per-paper keyword search based on the user's question.\n\n`;
 
         let passageNum = 0;
         for (const [title, passages] of Object.entries(grouped)) {
-          contextText += `=== Paper: ${title} ===\n\n`;
+          contextText += `=== Paper: ${title} (${passages.length} passage(s)) ===\n\n`;
           for (const p of passages) {
             passageNum++;
             const sectionLabel = p.section ? ` | Section: ${p.section}` : "";
@@ -371,7 +534,7 @@ async function buildContextParts(settings: ReturnType<typeof getSettings>, userQ
         }
 
         parts.push({ text: contextText });
-        ragInfo = `🔍 RAG: ${results.length} passages from ${Object.keys(grouped).length} paper(s) (searched ${totalChunks} chunks)${queryNote}`;
+        ragInfo = `🔍 RAG (balanced): ${results.length} passages from ${paperCount}/${indices.length} paper(s) [${chunkCounts}] (searched ${totalChunks} chunks)${queryNote}`;
       } else {
         ragInfo = `🔍 RAG: no matching passages found (searched ${totalChunks} chunks across ${indices.length} paper(s))${queryNote}`;
       }
@@ -451,6 +614,11 @@ async function saveAnalysisNote() {
 
     const paperInfoHtml = renderMd(buildPaperInfoSection());
 
+    let quHtml = "";
+    if (questionUnderstandingDoc) {
+      quHtml = `<h1>Question Understanding</h1>${renderMd(questionUnderstandingDoc)}`;
+    }
+
     let extractionsHtml = "";
     if (analysisDoc) {
       extractionsHtml = `<h1>Per-paper Extractions</h1>${renderMd(analysisDoc)}`;
@@ -479,6 +647,8 @@ async function saveAnalysisNote() {
 <p><em>Saved: ${timestamp}</em></p>
 <hr/>
 ${paperInfoHtml}
+<hr/>
+${quHtml}
 <hr/>
 ${extractionsHtml}
 <hr/>
@@ -524,8 +694,6 @@ function escAttr(t: string) { return t.replace(/&/g, "&amp;").replace(/"/g, "&qu
 // ---------- First-message: full analysis pipeline ----------
 
 async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeof getSettings>) {
-  const perPaperPrompt = settings.extractionPrompt.replace(/\{question\}/g, userPrompt);
-
   const allPdfs: { pdfItem: any; title: string }[] = [];
   for (const p of papers) {
     const z = Zotero.Items.get(p.id);
@@ -544,7 +712,7 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
     for (let i = 0; i < papers.length; i++) {
       const p = papers[i];
       const alreadyReady = ragIndices.has(p.id) || await hasRagIndex(p.id);
-      ragBubble.innerHTML = `<strong>🔍 Preparing search index — ${i + 1}/${papers.length}</strong><br>` +
+      ragBubble.innerHTML = `<strong>🔍 Phase 1/4 — Preparing search index — ${i + 1}/${papers.length}</strong><br>` +
         (alreadyReady ? `📦 Loading: ${esc(p.title)}` : `🔨 Building: ${esc(p.title)}`);
       scrollToBottom();
       try {
@@ -559,13 +727,40 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
     if (ragCached > 0) ragParts.push(`${ragCached} cached`);
     if (ragBuilt > 0) ragParts.push(`${ragBuilt} newly built`);
     if (ragFailed > 0) ragParts.push(`${ragFailed} failed`);
-    ragBubble.innerHTML = `✅ Search index ready — ${ragParts.join(", ")}`;
+    ragBubble.innerHTML = `✅ Phase 1/4 — Search index ready — ${ragParts.join(", ")}`;
   } catch (e) {
-    ragBubble.innerHTML = `⚠️ Search index build error. Continuing without RAG support.`;
+    ragBubble.innerHTML = `⚠️ Phase 1/4 — Search index build error. Continuing without RAG support.`;
   }
   scrollToBottom();
 
-  // === Phase 2: Per-paper extraction (AI calls) ===
+  // === Phase 2: Question Understanding (AI call) ===
+  const quBubble = addMessageBubble("system", `<strong>🧠 Phase 2/4 — Analyzing research question...</strong>`);
+  scrollToBottom();
+
+  const quPrompt = settings.questionUnderstandingPrompt.replace(/\{question\}/g, userPrompt);
+  try {
+    questionUnderstandingDoc = await callAI(settings, [{ role: "user" as const, parts: [{ text: quPrompt }] }]);
+    quBubble.innerHTML = `✅ Phase 2/4 — Question analysis complete.`;
+  } catch (e: any) {
+    questionUnderstandingDoc = "";
+    quBubble.innerHTML = `⚠️ Phase 2/4 — Question analysis failed (${esc(e?.message || String(e))}). Continuing with direct extraction.`;
+  }
+  scrollToBottom();
+
+  // Show question understanding as a collapsible section
+  if (questionUnderstandingDoc) {
+    const quDetailBubble = addMessageBubble("model", "");
+    quDetailBubble.innerHTML = renderMd(
+      `<details><summary>🧠 Question Understanding (click to expand)</summary>\n\n${questionUnderstandingDoc}\n\n</details>`
+    );
+    scrollToBottom();
+  }
+
+  // === Phase 3: Per-paper extraction (AI calls, with question understanding context) ===
+  const perPaperPrompt = settings.extractionPrompt
+    .replace(/\{question\}/g, userPrompt)
+    .replace(/\{understanding\}/g, questionUnderstandingDoc || `(Question understanding not available. Please directly analyze based on the research question.)`);
+
   const CONCURRENCY = Math.min(settings.concurrency, allPdfs.length);
   const progressBubble = addMessageBubble("system", "");
   const extractions: string[] = new Array(allPdfs.length).fill("");
@@ -578,7 +773,7 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
     const modelInfo = settings.extractionModel !== settings.model
       ? `extraction: ${esc(settings.extractionModel)} → synthesis: ${esc(settings.model)}`
       : `model: ${esc(settings.model)}`;
-    let prog = `<strong>Extracting (${CONCURRENCY} concurrent) — ${doneCount}/${allPdfs.length}</strong><br><div style="font-size:11px;color:#888;margin:2px 0 6px;">${modelInfo}</div>`;
+    let prog = `<strong>📑 Phase 3/4 — Extracting (${CONCURRENCY} concurrent) — ${doneCount}/${allPdfs.length}</strong><br><div style="font-size:11px;color:#888;margin:2px 0 6px;">${modelInfo}</div>`;
 
     if (runningIndices.length > 0) {
       prog += `<div style="margin-bottom:6px;color:#007AFF;font-weight:500;">⏳ Processing:</div>`;
@@ -632,7 +827,6 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
     updateProgress();
   }
 
-  // Concurrent pool: run up to CONCURRENCY tasks at once
   const queue = allPdfs.map((_, i) => i);
   const workers: Promise<void>[] = [];
   for (let w = 0; w < CONCURRENCY; w++) {
@@ -654,22 +848,23 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
 
   analysisDoc = extractions.join("\n\n---\n\n");
 
-  // Save extractions immediately so the work isn't lost if synthesis fails
   chatHistory.push({ role: "user", text: userPrompt });
   await saveAnalysisNote();
 
-  // === Phase 3: Synthesis ===
-  progressBubble.innerHTML = `✅ All ${allPdfs.length} papers extracted. Synthesizing...`;
+  // === Phase 4: Synthesis (with question understanding context) ===
+  progressBubble.innerHTML = `✅ Phase 3/4 — All ${allPdfs.length} papers extracted. Starting synthesis...`;
   scrollToBottom();
 
   const synthPrompt = settings.synthesisPrompt
     .replace(/\{question\}/g, userPrompt)
+    .replace(/\{understanding\}/g, questionUnderstandingDoc || "(Question understanding not available.)")
     .replace(/\{count\}/g, String(allPdfs.length));
 
   const synthContents = [{ role: "user" as const, parts: [{ text: analysisDoc + "\n\n---\n\n" + synthPrompt }] }];
 
   let fullMd = `<details><summary>📋 Per-paper Extractions (click to expand)</summary>\n\n${analysisDoc}\n\n</details>\n\n---\n\n`;
-  progressBubble.remove();
+  progressBubble.innerHTML = `<strong>🔬 Phase 4/4 — Synthesizing cross-paper analysis...</strong>`;
+  scrollToBottom();
 
   const modelBubble = addMessageBubble("model", "");
 
@@ -695,7 +890,6 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
 async function handleFollowUp(userPrompt: string, settings: ReturnType<typeof getSettings>) {
   const { parts: contextParts, ragInfo } = await buildContextParts(settings, userPrompt);
 
-  // Show RAG search status to user
   if (ragInfo) {
     addMessageBubble("system", esc(ragInfo));
     scrollToBottom();
@@ -710,7 +904,8 @@ async function handleFollowUp(userPrompt: string, settings: ReturnType<typeof ge
     }
   }
 
-  const userParts: any[] = [...contextParts, { text: userPrompt }];
+  const wrappedPrompt = settings.followUpPrompt.replace(/\{question\}/g, userPrompt);
+  const userParts: any[] = [...contextParts, { text: wrappedPrompt }];
   contents.push({ role: "user", parts: userParts });
 
   const modelBubble = addMessageBubble("model", "");
@@ -843,7 +1038,7 @@ function init() {
   });
 
   if (papers.length > 0) {
-    addMessageBubble("system", `${papers.length} paper(s) loaded. Type your research question to start the analysis. Follow-up questions will automatically search all papers via RAG.`);
+    addMessageBubble("system", `${papers.length} paper(s) loaded. Type your research question to start the 4-phase analysis pipeline:\n① RAG Index → ② Question Understanding → ③ Per-paper Extraction → ④ Synthesis.\nFollow-up questions will automatically search all papers via RAG.`);
     updateRagStatusIndicators();
   }
 
