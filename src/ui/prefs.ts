@@ -93,11 +93,17 @@ const DEFAULT_SYNTHESIS_PROMPT = `# Role: 多文献交叉分析与综合专家
 {question}
 """
 
-以下是从 {count} 篇论文中提取的结构化信息。
+## Context: 各篇论文的结构化信息提取结果（共 {count} 篇）
+
+以下是通过 Per-paper Extraction 阶段从每篇论文中独立提取的结构化信息。每篇包含核心要素提取（研究问题、贡献、方法、结果、局限性）和与研究问题的相关性分析。
+
+"""
+{extractions}
+"""
 
 ## Task: 多文献交叉比对与综合分析
 
-请严格按照以下步骤进行分析和输出：
+基于以上各篇论文的提取结果，请严格按照以下步骤进行交叉分析和输出：
 
 ### <Thinking_Process>：交叉比对与证据网络构建
 
@@ -522,6 +528,59 @@ function initForm(Zotero: any) {
   $("reset-follow-up-prompt").addEventListener("click", () => {
     followUpPrompt.value = DEFAULT_FOLLOW_UP_PROMPT;
     save("followUpPrompt", DEFAULT_FOLLOW_UP_PROMPT);
+  });
+
+  // ---- AI Tool Toggles ----
+  const ALL_TOOL_NAMES = [
+    "load_paper_fulltext", "rag_deep_search", "get_paper_metadata",
+    "get_item_notes", "get_item_annotations",
+    "list_collections", "list_collection_items", "search_library",
+    "get_items_by_tag", "list_tags",
+    "remove_paper", "add_paper_to_analysis", "rebuild_paper_rag",
+  ];
+
+  let enabledTools: Set<string>;
+  try {
+    const raw = load("enabledTools", "");
+    enabledTools = raw ? new Set(JSON.parse(raw) as string[]) : new Set(ALL_TOOL_NAMES);
+  } catch {
+    enabledTools = new Set(ALL_TOOL_NAMES);
+  }
+
+  const syncToolCheckboxes = () => {
+    for (const name of ALL_TOOL_NAMES) {
+      const cb = document.getElementById(`tool-${name}`) as HTMLInputElement | null;
+      if (cb) cb.checked = enabledTools.has(name);
+    }
+  };
+
+  const saveToolPrefs = () => {
+    save("enabledTools", JSON.stringify([...enabledTools]));
+  };
+
+  syncToolCheckboxes();
+
+  for (const name of ALL_TOOL_NAMES) {
+    const cb = document.getElementById(`tool-${name}`) as HTMLInputElement | null;
+    if (cb) {
+      cb.addEventListener("change", () => {
+        if (cb.checked) enabledTools.add(name);
+        else enabledTools.delete(name);
+        saveToolPrefs();
+      });
+    }
+  }
+
+  $("tools-select-all").addEventListener("click", () => {
+    for (const name of ALL_TOOL_NAMES) enabledTools.add(name);
+    syncToolCheckboxes();
+    saveToolPrefs();
+  });
+
+  $("tools-select-none").addEventListener("click", () => {
+    enabledTools.clear();
+    syncToolCheckboxes();
+    saveToolPrefs();
   });
 }
 

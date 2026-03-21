@@ -186,11 +186,17 @@ function getSettings() {
 {question}
 """
 
-以下是从 {count} 篇论文中提取的结构化信息。
+## Context: 各篇论文的结构化信息提取结果（共 {count} 篇）
+
+以下是通过 Per-paper Extraction 阶段从每篇论文中独立提取的结构化信息。每篇包含核心要素提取（研究问题、贡献、方法、结果、局限性）和与研究问题的相关性分析。
+
+"""
+{extractions}
+"""
 
 ## Task: 多文献交叉比对与综合分析
 
-请严格按照以下步骤进行分析和输出：
+基于以上各篇论文的提取结果，请严格按照以下步骤进行交叉分析和输出：
 
 ### <Thinking_Process>：交叉比对与证据网络构建
 
@@ -251,6 +257,22 @@ function getSettings() {
 
   const ragChunksStr = (Z.Prefs.get(`${pfx}.ragChunksPerQuery`, true) as string) || "30";
   const ragPerPaperStr = (Z.Prefs.get(`${pfx}.ragMaxChunksPerPaper`, true) as string) || "3";
+
+  const ALL_TOOL_NAMES = [
+    "load_paper_fulltext", "rag_deep_search", "get_paper_metadata",
+    "get_item_notes", "get_item_annotations",
+    "list_collections", "list_collection_items", "search_library",
+    "get_items_by_tag", "list_tags",
+    "remove_paper", "add_paper_to_analysis", "rebuild_paper_rag",
+  ];
+  let enabledTools: Set<string>;
+  try {
+    const raw = Z.Prefs.get(`${pfx}.enabledTools`, true) as string;
+    enabledTools = raw ? new Set(JSON.parse(raw) as string[]) : new Set(ALL_TOOL_NAMES);
+  } catch {
+    enabledTools = new Set(ALL_TOOL_NAMES);
+  }
+
   return {
     provider,
     apiBase: (Z.Prefs.get(`${pfx}.apiBase`, true) as string) || defaultBases[provider] || defaultBases.gemini,
@@ -264,6 +286,7 @@ function getSettings() {
     followUpPrompt: (Z.Prefs.get(`${pfx}.followUpPrompt`, true) as string) || defaultFollowUpPrompt,
     ragChunksPerQuery: Math.max(5, Math.min(60, parseInt(ragChunksStr, 10) || 30)),
     ragMaxChunksPerPaper: Math.max(1, Math.min(10, parseInt(ragPerPaperStr, 10) || 3)),
+    enabledTools,
   };
 }
 
@@ -858,9 +881,10 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
   const synthPrompt = settings.synthesisPrompt
     .replace(/\{question\}/g, userPrompt)
     .replace(/\{understanding\}/g, questionUnderstandingDoc || "(Question understanding not available.)")
+    .replace(/\{extractions\}/g, analysisDoc || "(No extraction results available.)")
     .replace(/\{count\}/g, String(allPdfs.length));
 
-  const synthContents = [{ role: "user" as const, parts: [{ text: analysisDoc + "\n\n---\n\n" + synthPrompt }] }];
+  const synthContents = [{ role: "user" as const, parts: [{ text: synthPrompt }] }];
 
   let fullMd = `<details><summary>📋 Per-paper Extractions (click to expand)</summary>\n\n${analysisDoc}\n\n</details>\n\n---\n\n`;
   progressBubble.innerHTML = `<strong>🔬 Phase 4/4 — Synthesizing cross-paper analysis...</strong>`;
@@ -885,6 +909,613 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
   await saveAnalysisNote();
 }
 
+// ---------- Tool Use (Function Calling) ----------
+
+interface ToolDef {
+  name: string;
+  description: string;
+  parameters: { type: string; properties: Record<string, any>; required: string[] };
+}
+
+interface ToolCall {
+  name: string;
+  args: Record<string, any>;
+  id: string;
+}
+
+const MAX_TOOL_ROUNDS = 5;
+const FULLTEXT_MAX_CHARS = 80000;
+
+function formatZoteroItemSummary(item: any): string {
+  try {
+    const parent = item.isAttachment?.() ? item.parentItem : item;
+    const it = parent || item;
+    const title = it.getField?.("title") || "(untitled)";
+    const year = it.getField?.("date")?.match(/\d{4}/)?.[0] || "";
+    const creators = it.getCreators?.() || [];
+    const first = creators[0] ? (creators[0].lastName || creators[0].name || "?") : "";
+    const authorStr = first ? (creators.length > 1 ? `${first} et al.` : first) : "Unknown";
+    const journal = it.getField?.("publicationTitle") || "";
+    const type = Zotero.ItemTypes?.getName?.(it.itemTypeID) || "";
+    let line = `[ID:${it.id}] ${authorStr} (${year || "?"}) "${title}"`;
+    if (journal) line += ` — ${journal}`;
+    if (type) line += ` [${type}]`;
+    return line;
+  } catch {
+    return `[ID:${item?.id || "?"}] (unreadable)`;
+  }
+}
+
+function getToolDefs(): ToolDef[] {
+  const paperList = papers.map((p, i) => `${i + 1}. "${p.title}"`).join("; ");
+  return [
+    // ── Analysis-set tools ──
+    {
+      name: "load_paper_fulltext",
+      description: `Load the full text of a specific paper for in-depth analysis. Use when the extraction summary lacks details you need. Papers: ${paperList}`,
+      parameters: {
+        type: "object",
+        properties: { paper_index: { type: "number", description: "1-based paper index" } },
+        required: ["paper_index"],
+      },
+    },
+    {
+      name: "rag_deep_search",
+      description: "Search for specific passages within the analysis papers using keyword retrieval. Returns original text chunks most relevant to the query.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search query with specific academic terms" },
+          paper_index: { type: "number", description: "Optional 1-based paper index to search only one paper. Omit to search all." },
+        },
+        required: ["query"],
+      },
+    },
+    {
+      name: "get_paper_metadata",
+      description: "Get detailed bibliographic metadata (authors, year, journal, DOI, abstract) of an analysis paper.",
+      parameters: {
+        type: "object",
+        properties: { paper_index: { type: "number", description: "1-based paper index" } },
+        required: ["paper_index"],
+      },
+    },
+    {
+      name: "get_item_notes",
+      description: "Get user-created notes attached to a paper in the analysis set.",
+      parameters: {
+        type: "object",
+        properties: { paper_index: { type: "number", description: "1-based paper index" } },
+        required: ["paper_index"],
+      },
+    },
+    {
+      name: "get_item_annotations",
+      description: "Get PDF highlights and annotations (with comments and page numbers) for a paper in the analysis set.",
+      parameters: {
+        type: "object",
+        properties: { paper_index: { type: "number", description: "1-based paper index" } },
+        required: ["paper_index"],
+      },
+    },
+    // ── Library-wide tools ──
+    {
+      name: "list_collections",
+      description: "List all collections (folders) in the Zotero library with hierarchy. No parameters needed.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+    {
+      name: "list_collection_items",
+      description: "List items in a Zotero collection. Use list_collections first to find IDs.",
+      parameters: {
+        type: "object",
+        properties: {
+          collection_id: { type: "number", description: "Collection ID from list_collections" },
+          collection_name: { type: "string", description: "Collection name (alternative to ID, supports partial match)" },
+        },
+        required: [],
+      },
+    },
+    {
+      name: "search_library",
+      description: "Search the entire Zotero library by title, author, or year keywords.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search keywords" },
+          limit: { type: "number", description: "Max results (default 20, max 50)" },
+        },
+        required: ["query"],
+      },
+    },
+    {
+      name: "get_items_by_tag",
+      description: "Get all Zotero library items that have a specific tag.",
+      parameters: {
+        type: "object",
+        properties: { tag: { type: "string", description: "Exact tag name" } },
+        required: ["tag"],
+      },
+    },
+    {
+      name: "list_tags",
+      description: "List all tags used in the Zotero library, optionally filtered by a substring.",
+      parameters: {
+        type: "object",
+        properties: { filter: { type: "string", description: "Optional substring to filter tag names" } },
+        required: [],
+      },
+    },
+    // ── Analysis-set management tools ──
+    {
+      name: "remove_paper",
+      description: "Remove a paper from the current analysis set. Use when a paper is determined to be irrelevant. The paper is only removed from this session, not from Zotero.",
+      parameters: {
+        type: "object",
+        properties: { paper_index: { type: "number", description: "1-based paper index to remove" } },
+        required: ["paper_index"],
+      },
+    },
+    {
+      name: "add_paper_to_analysis",
+      description: "Add a Zotero item to the current analysis set by its Zotero item ID (found via search_library, list_collection_items, or get_items_by_tag). Builds RAG index automatically.",
+      parameters: {
+        type: "object",
+        properties: { item_id: { type: "number", description: "Zotero item ID (the [ID:xxx] number from search results)" } },
+        required: ["item_id"],
+      },
+    },
+    {
+      name: "rebuild_paper_rag",
+      description: "Force rebuild the RAG index for a paper in the analysis set. Use if the index seems outdated or search results are poor.",
+      parameters: {
+        type: "object",
+        properties: { paper_index: { type: "number", description: "1-based paper index" } },
+        required: ["paper_index"],
+      },
+    },
+  ];
+}
+
+async function executeTool(name: string, args: Record<string, any>, settings: ReturnType<typeof getSettings>): Promise<string> {
+  const idx = typeof args.paper_index === "number" ? args.paper_index - 1 : -1;
+
+  switch (name) {
+    case "load_paper_fulltext": {
+      if (idx < 0 || idx >= papers.length)
+        return `Error: Invalid paper_index ${args.paper_index}. Valid: 1-${papers.length}.`;
+      const p = papers[idx];
+      const zItem = Zotero.Items.get(p.id);
+      if (!zItem) return `Error: Item not found in Zotero.`;
+      const pdf = getBestPdfAttachment(zItem);
+      if (!pdf) return `Error: No PDF attachment for "${p.title}".`;
+      const text = await getPdfText(pdf);
+      if (!text) return `Error: Could not extract text.`;
+      if (text.length > FULLTEXT_MAX_CHARS)
+        return `[Full text — Paper ${args.paper_index}: ${p.title}] (first ${FULLTEXT_MAX_CHARS} chars of ${text.length})\n\n${text.substring(0, FULLTEXT_MAX_CHARS)}\n\n[...truncated...]`;
+      return `[Full text — Paper ${args.paper_index}: ${p.title}]\n\n${text}`;
+    }
+
+    case "rag_deep_search": {
+      const query = args.query as string;
+      if (!query) return `Error: query is required.`;
+      let indices: RagIndex[] = [];
+      if (idx >= 0) {
+        if (idx >= papers.length) return `Error: Invalid paper_index.`;
+        const ri = ragIndices.get(papers[idx].id) || await ensureRagForPaper(papers[idx].id);
+        if (ri) indices.push(ri);
+      } else {
+        for (const p of papers) {
+          const ri = ragIndices.get(p.id) || await ensureRagForPaper(p.id);
+          if (ri) indices.push(ri);
+        }
+      }
+      if (indices.length === 0) return `No RAG indices available.`;
+      const sq = await rewriteQueryForSearch(settings, query);
+      const results = searchChunksBalanced(sq, indices, 5, 15);
+      if (results.length === 0) return `No relevant passages found for: "${query}"`;
+      let out = `Found ${results.length} passage(s) for: "${query}"\n\n`;
+      for (const r of results) {
+        const sec = r.section ? ` | ${r.section}` : "";
+        out += `--- [${r.paperTitle}${sec}] (score: ${r.score.toFixed(2)}) ---\n${r.text}\n\n`;
+      }
+      return out;
+    }
+
+    case "get_paper_metadata": {
+      if (idx < 0 || idx >= papers.length)
+        return `Error: Invalid paper_index. Valid: 1-${papers.length}.`;
+      return getPaperMetadata(papers[idx].id) || `No metadata available.`;
+    }
+
+    case "get_item_notes": {
+      if (idx < 0 || idx >= papers.length)
+        return `Error: Invalid paper_index. Valid: 1-${papers.length}.`;
+      try {
+        const item = Zotero.Items.get(papers[idx].id);
+        if (!item) return `Error: Item not found.`;
+        const parent = item.isAttachment?.() ? item.parentItem : item;
+        const noteIDs: number[] = parent?.getNotes?.() || [];
+        if (noteIDs.length === 0) return `No notes attached to Paper ${args.paper_index}: "${papers[idx].title}".`;
+        let out = `Notes for Paper ${args.paper_index} ("${papers[idx].title}"): ${noteIDs.length} note(s)\n\n`;
+        for (let i = 0; i < noteIDs.length; i++) {
+          const noteItem = Zotero.Items.get(noteIDs[i]);
+          if (!noteItem) continue;
+          const html = noteItem.getNote?.() || "";
+          const text = html.replace(/<[^>]+>/g, "").trim();
+          out += `--- Note ${i + 1} ---\n${text || "(empty)"}\n\n`;
+        }
+        return out;
+      } catch (e: any) {
+        return `Error reading notes: ${e?.message || e}`;
+      }
+    }
+
+    case "get_item_annotations": {
+      if (idx < 0 || idx >= papers.length)
+        return `Error: Invalid paper_index. Valid: 1-${papers.length}.`;
+      try {
+        const item = Zotero.Items.get(papers[idx].id);
+        if (!item) return `Error: Item not found.`;
+        const pdf = getBestPdfAttachment(item);
+        if (!pdf) return `Error: No PDF attachment for "${papers[idx].title}".`;
+        const annIDs: number[] = pdf.getAnnotations?.() || [];
+        if (annIDs.length === 0) return `No annotations for Paper ${args.paper_index}: "${papers[idx].title}".`;
+        let out = `Annotations for Paper ${args.paper_index} ("${papers[idx].title}"): ${annIDs.length} annotation(s)\n\n`;
+        for (const annID of annIDs) {
+          const ann = Zotero.Items.get(annID);
+          if (!ann) continue;
+          const type = ann.annotationType || "unknown";
+          const text = ann.annotationText || "";
+          const comment = ann.annotationComment || "";
+          const page = ann.annotationPageLabel || "?";
+          out += `[${type}] p.${page}`;
+          if (text) out += `\n  Highlight: "${text}"`;
+          if (comment) out += `\n  Comment: ${comment}`;
+          out += "\n\n";
+        }
+        return out;
+      } catch (e: any) {
+        return `Error reading annotations: ${e?.message || e}`;
+      }
+    }
+
+    case "list_collections": {
+      try {
+        const libraryID = Zotero.Libraries.userLibraryID;
+        const raw = await Zotero.Collections.getByLibrary(libraryID);
+        if (!raw || raw.length === 0) return "No collections found in library.";
+        const colls: any[] = raw.map((c: any) => typeof c === "number" ? Zotero.Collections.get(c) : c).filter(Boolean);
+        const roots = colls.filter((c: any) => !c.parentID);
+        function tree(node: any, depth: number): string {
+          const indent = "  ".repeat(depth);
+          let childItemCount = 0;
+          try { childItemCount = (node.getChildItems?.(true, false) || []).length; } catch {}
+          let s = `${indent}- [ID:${node.id}] ${node.name} (${childItemCount} items)\n`;
+          const kids = colls.filter((c: any) => c.parentID === node.id);
+          kids.sort((a: any, b: any) => (a.name || "").localeCompare(b.name || ""));
+          for (const k of kids) s += tree(k, depth + 1);
+          return s;
+        }
+        roots.sort((a: any, b: any) => (a.name || "").localeCompare(b.name || ""));
+        let out = `Found ${colls.length} collection(s):\n\n`;
+        for (const r of roots) out += tree(r, 0);
+        return out;
+      } catch (e: any) {
+        return `Error listing collections: ${e?.message || e}`;
+      }
+    }
+
+    case "list_collection_items": {
+      try {
+        const libraryID = Zotero.Libraries.userLibraryID;
+        let coll: any = null;
+        if (args.collection_id) {
+          coll = Zotero.Collections.get(args.collection_id);
+        }
+        if (!coll && args.collection_name) {
+          const raw = await Zotero.Collections.getByLibrary(libraryID);
+          const all: any[] = raw.map((c: any) => typeof c === "number" ? Zotero.Collections.get(c) : c).filter(Boolean);
+          const target = (args.collection_name as string).toLowerCase();
+          coll = all.find((c: any) => c.name === args.collection_name)
+            || all.find((c: any) => (c.name || "").toLowerCase().includes(target));
+        }
+        if (!coll) return `Collection not found. Use list_collections to see available collections.`;
+        const items: any[] = coll.getChildItems?.(false, false) || [];
+        const regular = items.filter((it: any) => it.isRegularItem?.());
+        if (regular.length === 0) return `Collection "${coll.name}" has no regular items.`;
+        const cap = 50;
+        let out = `Collection "${coll.name}" — ${regular.length} item(s):\n\n`;
+        for (let i = 0; i < Math.min(regular.length, cap); i++)
+          out += formatZoteroItemSummary(regular[i]) + "\n";
+        if (regular.length > cap) out += `\n...and ${regular.length - cap} more items.`;
+        return out;
+      } catch (e: any) {
+        return `Error: ${e?.message || e}`;
+      }
+    }
+
+    case "search_library": {
+      try {
+        const query = args.query as string;
+        if (!query) return `Error: query is required.`;
+        const limit = Math.min(Math.max((args.limit as number) || 20, 1), 50);
+        const s = new Zotero.Search();
+        s.libraryID = Zotero.Libraries.userLibraryID;
+        s.addCondition("quicksearch-titleCreatorYear", "contains", query);
+        const ids: number[] = await s.search();
+        if (!ids || ids.length === 0) return `No items found for: "${query}"`;
+        const items: any[] = ids.map((id: number) => Zotero.Items.get(id)).filter(Boolean);
+        const regular = items.filter((it: any) => it.isRegularItem?.());
+        let out = `Search "${query}": ${regular.length} result(s)\n\n`;
+        for (let i = 0; i < Math.min(regular.length, limit); i++)
+          out += formatZoteroItemSummary(regular[i]) + "\n";
+        if (regular.length > limit) out += `\n...and ${regular.length - limit} more results.`;
+        return out;
+      } catch (e: any) {
+        return `Error searching: ${e?.message || e}`;
+      }
+    }
+
+    case "get_items_by_tag": {
+      try {
+        const tag = args.tag as string;
+        if (!tag) return `Error: tag is required.`;
+        const s = new Zotero.Search();
+        s.libraryID = Zotero.Libraries.userLibraryID;
+        s.addCondition("tag", "is", tag);
+        const ids: number[] = await s.search();
+        if (!ids || ids.length === 0) return `No items found with tag: "${tag}"`;
+        const items: any[] = ids.map((id: number) => Zotero.Items.get(id)).filter(Boolean);
+        const regular = items.filter((it: any) => it.isRegularItem?.());
+        const cap = 50;
+        let out = `Items with tag "${tag}": ${regular.length} result(s)\n\n`;
+        for (let i = 0; i < Math.min(regular.length, cap); i++)
+          out += formatZoteroItemSummary(regular[i]) + "\n";
+        if (regular.length > cap) out += `\n...and ${regular.length - cap} more.`;
+        return out;
+      } catch (e: any) {
+        return `Error: ${e?.message || e}`;
+      }
+    }
+
+    case "list_tags": {
+      try {
+        const libraryID = Zotero.Libraries.userLibraryID;
+        const filter = (args.filter as string) || "";
+        let tagMap: any;
+        try {
+          tagMap = await Zotero.Tags.getAll(libraryID);
+        } catch {
+          const s = new Zotero.Search();
+          s.libraryID = libraryID;
+          s.addCondition("noChildren", "true");
+          const ids: number[] = await s.search();
+          const items: any[] = ids.map((id: number) => Zotero.Items.get(id)).filter(Boolean);
+          const tagSet = new Set<string>();
+          for (const it of items) {
+            try { for (const t of (it.getTags?.() || [])) tagSet.add(t.tag || t); } catch {}
+          }
+          const arr = [...tagSet].sort();
+          const filtered = filter ? arr.filter(t => t.toLowerCase().includes(filter.toLowerCase())) : arr;
+          if (filtered.length === 0) return filter ? `No tags matching "${filter}".` : "No tags found.";
+          return (filter ? `Tags matching "${filter}": ${filtered.length}\n\n` : `All tags (${filtered.length}):\n\n`) + filtered.join(", ");
+        }
+        let tagNames: string[];
+        if (tagMap instanceof Map) {
+          tagNames = [...tagMap.values()].map((v: any) => typeof v === "string" ? v : v?.tag || String(v));
+        } else if (Array.isArray(tagMap)) {
+          tagNames = tagMap.map((t: any) => typeof t === "string" ? t : t?.tag || t?.name || String(t));
+        } else if (typeof tagMap === "object") {
+          tagNames = Object.values(tagMap).map((v: any) => typeof v === "string" ? v : v?.tag || String(v));
+        } else {
+          return `Unexpected tag data format.`;
+        }
+        tagNames.sort();
+        const filtered = filter ? tagNames.filter(t => t.toLowerCase().includes(filter.toLowerCase())) : tagNames;
+        if (filtered.length === 0) return filter ? `No tags matching "${filter}".` : "No tags found.";
+        let out = filter ? `Tags matching "${filter}": ${filtered.length}\n\n` : `All tags (${filtered.length}):\n\n`;
+        out += filtered.join(", ");
+        return out;
+      } catch (e: any) {
+        return `Error listing tags: ${e?.message || e}`;
+      }
+    }
+
+    case "remove_paper": {
+      if (idx < 0 || idx >= papers.length)
+        return `Error: Invalid paper_index. Valid: 1-${papers.length}.`;
+      if (papers.length <= 1)
+        return `Error: Cannot remove the last paper. At least one paper must remain in the analysis set.`;
+      const removed = papers[idx];
+      papers.splice(idx, 1);
+      ragIndices.delete(removed.id);
+      renderPaperList();
+      return `Removed Paper ${args.paper_index} ("${removed.title}") from the analysis set. ${papers.length} paper(s) remaining.`;
+    }
+
+    case "add_paper_to_analysis": {
+      try {
+        const itemId = args.item_id as number;
+        if (!itemId) return `Error: item_id is required.`;
+        if (papers.some(p => p.id === itemId))
+          return `Paper with ID ${itemId} is already in the analysis set.`;
+        const zItem = Zotero.Items.get(itemId);
+        if (!zItem) return `Error: Zotero item ${itemId} not found.`;
+        const parent = zItem.isAttachment?.() ? zItem.parentItem : zItem;
+        if (!parent) return `Error: Could not resolve item.`;
+        if (!parent.isRegularItem?.()) return `Error: Item ${itemId} is not a regular item (may be a note or attachment).`;
+        const title = parent.getField?.("title") || "Untitled";
+        const paperId = parent.id;
+        if (papers.some(p => p.id === paperId))
+          return `Paper "${title}" (ID:${paperId}) is already in the analysis set.`;
+        papers.push({ id: paperId, title });
+        renderPaperList();
+        let ragStatus = "";
+        try {
+          const ri = await ensureRagForPaper(paperId);
+          if (ri) {
+            ragStatus = ` RAG index built (${ri.chunks.length} chunks).`;
+            await updateRagStatusIndicators();
+          } else {
+            ragStatus = ` Warning: Could not build RAG index (no PDF text available).`;
+          }
+        } catch (e: any) {
+          ragStatus = ` Warning: RAG index build failed: ${e?.message || e}`;
+        }
+        return `Added "${title}" (ID:${paperId}) as Paper ${papers.length} to the analysis set.${ragStatus}`;
+      } catch (e: any) {
+        return `Error adding paper: ${e?.message || e}`;
+      }
+    }
+
+    case "rebuild_paper_rag": {
+      if (idx < 0 || idx >= papers.length)
+        return `Error: Invalid paper_index. Valid: 1-${papers.length}.`;
+      try {
+        const p = papers[idx];
+        ragIndices.delete(p.id);
+        const zItem = Zotero.Items.get(p.id);
+        if (!zItem) return `Error: Item not found in Zotero.`;
+        const pdf = getBestPdfAttachment(zItem);
+        if (!pdf) return `Error: No PDF attachment for "${p.title}".`;
+        const text = await getPdfText(pdf);
+        if (!text) return `Error: Could not extract text from PDF.`;
+        const parent = pdf.parentItem || pdf;
+        const title = String(parent.getField?.("title") || p.title);
+        const newIdx = buildRagIndexFromText(p.id, title, text);
+        await saveRagIndex(newIdx);
+        ragIndices.set(p.id, newIdx);
+        await updateRagStatusIndicators();
+        return `RAG index rebuilt for Paper ${args.paper_index} ("${p.title}"): ${newIdx.chunks.length} chunks indexed.`;
+      } catch (e: any) {
+        return `Error rebuilding RAG: ${e?.message || e}`;
+      }
+    }
+
+    default:
+      return `Unknown tool: ${name}`;
+  }
+}
+
+function buildPayloadWithTools(
+  s: ReturnType<typeof getSettings>,
+  chatMsgs: { role: string; text: string }[],
+  userParts: any[],
+  toolRounds: { calls: ToolCall[]; results: string[] }[],
+  tools: ToolDef[] | null,
+): any {
+  if (s.provider === "gemini") {
+    const contents: any[] = [];
+    for (const m of chatMsgs)
+      contents.push({ role: m.role === "model" ? "model" : "user", parts: [{ text: m.text }] });
+    contents.push({ role: "user", parts: userParts });
+    for (const r of toolRounds) {
+      contents.push({ role: "model", parts: r.calls.map(c => ({ functionCall: { name: c.name, args: c.args } })) });
+      contents.push({ role: "user", parts: r.calls.map((c, i) => ({ functionResponse: { name: c.name, response: { result: r.results[i] } } })) });
+    }
+    const payload: any = { contents };
+    if (tools) payload.tools = [{ functionDeclarations: tools }];
+    return payload;
+  }
+
+  const messages: any[] = [];
+  for (const m of chatMsgs)
+    messages.push({ role: m.role === "model" ? "assistant" : m.role, content: m.text });
+  messages.push({ role: "user", content: userParts.filter((p: any) => p.text).map((p: any) => p.text).join("\n") });
+  for (const r of toolRounds) {
+    messages.push({
+      role: "assistant", content: null,
+      tool_calls: r.calls.map(c => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args) } })),
+    });
+    for (let i = 0; i < r.calls.length; i++)
+      messages.push({ role: "tool", tool_call_id: r.calls[i].id, content: r.results[i] });
+  }
+  const payload: any = { model: s.model, messages };
+  if (tools) payload.tools = tools.map(t => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.parameters } }));
+  return payload;
+}
+
+function parseToolResponse(s: ReturnType<typeof getSettings>, json: any): { type: "text"; text: string } | { type: "tool_calls"; toolCalls: ToolCall[] } {
+  if (s.provider === "gemini") {
+    const candidates = json?.candidates || json?.[0]?.candidates;
+    const parts = candidates?.[0]?.content?.parts || [];
+    const fCalls = parts.filter((p: any) => p.functionCall);
+    if (fCalls.length > 0) {
+      return {
+        type: "tool_calls",
+        toolCalls: fCalls.map((p: any, i: number) => ({
+          name: p.functionCall.name,
+          args: p.functionCall.args || {},
+          id: `gc_${Date.now()}_${i}`,
+        })),
+      };
+    }
+    let text = "";
+    if (Array.isArray(json)) {
+      for (const x of json) { const t = x?.candidates?.[0]?.content?.parts?.[0]?.text; if (t) text += t; }
+    } else {
+      text = parts.filter((p: any) => p.text).map((p: any) => p.text).join("");
+    }
+    return { type: "text", text };
+  }
+
+  const msg = json?.choices?.[0]?.message;
+  if (msg?.tool_calls?.length > 0) {
+    return {
+      type: "tool_calls",
+      toolCalls: msg.tool_calls.map((tc: any) => ({
+        name: tc.function.name,
+        args: JSON.parse(tc.function.arguments || "{}"),
+        id: tc.id || `oc_${Date.now()}`,
+      })),
+    };
+  }
+  return { type: "text", text: msg?.content || "" };
+}
+
+async function runToolCallLoop(
+  settings: ReturnType<typeof getSettings>,
+  chatMsgs: { role: string; text: string }[],
+  userParts: any[],
+  tools: ToolDef[],
+  onToolCall?: (tc: ToolCall) => void,
+  onToolResult?: (tc: ToolCall, result: string) => void,
+): Promise<string> {
+  const rounds: { calls: ToolCall[]; results: string[] }[] = [];
+
+  for (let r = 0; r < MAX_TOOL_ROUNDS; r++) {
+    const payload = buildPayloadWithTools(settings, chatMsgs, userParts, rounds, tools);
+    const res = await fetchWithRetry(
+      buildEndpoint(settings, false),
+      { method: "POST", headers: buildHeaders(settings), body: JSON.stringify(payload) },
+    );
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+    const parsed = parseToolResponse(settings, await res.json());
+
+    if (parsed.type === "text") return parsed.text;
+
+    const results: string[] = [];
+    for (const tc of parsed.toolCalls) {
+      if (onToolCall) onToolCall(tc);
+      const result = await executeTool(tc.name, tc.args, settings);
+      results.push(result);
+      if (onToolResult) onToolResult(tc, result);
+    }
+    rounds.push({ calls: parsed.toolCalls, results });
+  }
+
+  const payload = buildPayloadWithTools(settings, chatMsgs, userParts, rounds, null);
+  const res = await fetchWithRetry(
+    buildEndpoint(settings, false),
+    { method: "POST", headers: buildHeaders(settings), body: JSON.stringify(payload) },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  const json: any = await res.json();
+  if (settings.provider === "gemini") return json?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  return json?.choices?.[0]?.message?.content || "";
+}
+
 // ---------- Follow-up message ----------
 
 async function handleFollowUp(userPrompt: string, settings: ReturnType<typeof getSettings>) {
@@ -895,31 +1526,96 @@ async function handleFollowUp(userPrompt: string, settings: ReturnType<typeof ge
     scrollToBottom();
   }
 
-  const contents: any[] = [];
-  for (const msg of chatHistory) {
-    if (msg.role === "user") {
-      contents.push({ role: "user", parts: [{ text: msg.text }] });
-    } else if (msg.role === "model") {
-      contents.push({ role: "model", parts: [{ text: msg.text }] });
-    }
-  }
-
   const wrappedPrompt = settings.followUpPrompt.replace(/\{question\}/g, userPrompt);
   const userParts: any[] = [...contextParts, { text: wrappedPrompt }];
-  contents.push({ role: "user", parts: userParts });
 
-  const modelBubble = addMessageBubble("model", "");
-  let accum = "";
+  const chatMsgs = chatHistory
+    .filter(m => m.role === "user" || m.role === "model")
+    .map(m => ({ role: m.role, text: m.text }));
 
-  for await (const chunk of callAIStream(settings, contents)) {
-    accum += chunk;
+  const allTools = getToolDefs();
+  const tools = allTools.filter(t => settings.enabledTools.has(t.name));
+
+  if (tools.length === 0) {
+    const contents: any[] = [];
+    for (const msg of chatHistory) {
+      if (msg.role === "user") contents.push({ role: "user", parts: [{ text: msg.text }] });
+      else if (msg.role === "model") contents.push({ role: "model", parts: [{ text: msg.text }] });
+    }
+    contents.push({ role: "user", parts: userParts });
+    const modelBubble = addMessageBubble("model", "");
+    let accum = "";
+    for await (const chunk of callAIStream(settings, contents)) {
+      accum += chunk;
+      modelBubble.innerHTML = renderMd(accum);
+      scrollToBottom();
+    }
     modelBubble.innerHTML = renderMd(accum);
-    scrollToBottom();
+    chatHistory.push({ role: "user", text: userPrompt });
+    chatHistory.push({ role: "model", text: accum });
+    await saveAnalysisNote();
+    return;
   }
 
-  modelBubble.innerHTML = renderMd(accum);
+  const toolBubble = addMessageBubble("system", "");
+  let toolCount = 0;
+
+  let finalText: string;
+  try {
+    finalText = await runToolCallLoop(
+      settings, chatMsgs, userParts, tools,
+      (tc) => {
+        toolCount++;
+        const pidx = tc.args.paper_index as number | undefined;
+        const pTitle = pidx ? papers[pidx - 1]?.title || `Paper ${pidx}` : "";
+        let desc: string;
+        switch (tc.name) {
+          case "load_paper_fulltext": desc = `📄 Loading full text: ${pTitle}`; break;
+          case "rag_deep_search": desc = `🔍 Searching: "${tc.args.query}"${pidx ? ` in Paper ${pidx}` : ""}`; break;
+          case "get_paper_metadata": desc = `📋 Metadata: ${pTitle}`; break;
+          case "get_item_notes": desc = `📝 Notes: ${pTitle}`; break;
+          case "get_item_annotations": desc = `✏️ Annotations: ${pTitle}`; break;
+          case "list_collections": desc = "📁 Listing collections"; break;
+          case "list_collection_items": desc = `📁 Listing items in collection ${tc.args.collection_name || `#${tc.args.collection_id}`}`; break;
+          case "search_library": desc = `🔎 Searching library: "${tc.args.query}"`; break;
+          case "get_items_by_tag": desc = `🏷️ Filtering by tag: "${tc.args.tag}"`; break;
+          case "list_tags": desc = `🏷️ Listing tags${tc.args.filter ? ` (filter: "${tc.args.filter}")` : ""}`; break;
+          case "remove_paper": desc = `🗑️ Removing Paper ${pidx}${pTitle ? `: ${pTitle}` : ""}`; break;
+          case "add_paper_to_analysis": desc = `➕ Adding item ID:${tc.args.item_id} to analysis`; break;
+          case "rebuild_paper_rag": desc = `🔄 Rebuilding RAG for Paper ${pidx}${pTitle ? `: ${pTitle}` : ""}`; break;
+          default: desc = tc.name;
+        }
+        toolBubble.innerHTML = `<strong>🔧 Tool #${toolCount}</strong>: ${esc(desc)}`;
+        scrollToBottom();
+      },
+      (_tc, result) => {
+        const len = result.length;
+        const size = len > 1024 ? `${(len / 1024).toFixed(1)}KB` : `${len} chars`;
+        toolBubble.innerHTML += `<br><span style="color:#34a853;">✅ Done (${size})</span>`;
+        scrollToBottom();
+      },
+    );
+  } catch (e: any) {
+    if (toolCount > 0) {
+      toolBubble.innerHTML += `<br><span style="color:#ea4335;">❌ Error: ${esc(e?.message || String(e))}</span>`;
+    } else {
+      toolBubble.remove();
+    }
+    throw e;
+  }
+
+  if (toolCount > 0) {
+    toolBubble.innerHTML = `🔧 Used ${toolCount} tool call(s) to gather additional context.`;
+  } else {
+    toolBubble.remove();
+  }
+
+  const modelBubble = addMessageBubble("model", "");
+  modelBubble.innerHTML = renderMd(finalText);
+  scrollToBottom();
+
   chatHistory.push({ role: "user", text: userPrompt });
-  chatHistory.push({ role: "model", text: accum });
+  chatHistory.push({ role: "model", text: finalText });
 
   await saveAnalysisNote();
 }
@@ -1005,12 +1701,8 @@ function getPapers(): PaperInfo[] {
   return [];
 }
 
-function init() {
-  try { ensureGlobals(); } catch (_e) { /* will fail later with message */ }
-
-  papers = getPapers();
+function renderPaperList() {
   const list = $("paper-check-list");
-
   if (papers.length === 0) {
     list.innerHTML = `<div style="padding:12px;color:#86868b;font-size:12px;">No papers loaded</div>`;
   } else {
@@ -1024,6 +1716,14 @@ function init() {
       list.appendChild(item);
     });
   }
+  updateRagStatusIndicators();
+}
+
+function init() {
+  try { ensureGlobals(); } catch (_e) { /* will fail later with message */ }
+
+  papers = getPapers();
+  renderPaperList();
 
   const input = $("chat-input") as HTMLTextAreaElement;
   const btn = $("btn-send") as HTMLButtonElement;
@@ -1039,7 +1739,6 @@ function init() {
 
   if (papers.length > 0) {
     addMessageBubble("system", `${papers.length} paper(s) loaded. Type your research question to start the 4-phase analysis pipeline:\n① RAG Index → ② Question Understanding → ③ Per-paper Extraction → ④ Synthesis.\nFollow-up questions will automatically search all papers via RAG.`);
-    updateRagStatusIndicators();
   }
 
   input.focus();

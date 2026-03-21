@@ -207,6 +207,64 @@
       margin-top: -2px;
     }
     .reset-link:hover { color: #007AFF; background: none; }
+
+    /* ---- Tool toggle list ---- */
+    .tool-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      background: #fff;
+      transition: border-color 0.15s;
+    }
+    .tool-item:hover { border-color: #007AFF; }
+    .tool-item input[type="checkbox"] {
+      margin-top: 2px;
+      flex-shrink: 0;
+      width: 16px;
+      height: 16px;
+      accent-color: #007AFF;
+    }
+    .tool-info { flex: 1; min-width: 0; }
+    .tool-name {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: #333;
+    }
+    .tool-badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 3px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .tool-badge.analysis { background: #e3f2fd; color: #1565c0; }
+    .tool-badge.library { background: #fff3e0; color: #e65100; }
+    .tool-desc {
+      font-size: 11.5px;
+      color: #666;
+      margin-top: 3px;
+      line-height: 1.4;
+    }
+    .tool-group-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #555;
+      margin: 16px 0 8px 0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .tool-group-title:first-child { margin-top: 0; }
+    .tool-actions {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
   </style>
 </head>
 
@@ -217,6 +275,7 @@
     <button class="tab-btn active" data-tab="basic">Basic Settings</button>
     <button class="tab-btn" data-tab="prompts">Quick Prompts</button>
     <button class="tab-btn" data-tab="analysis">Multi-paper Analysis</button>
+    <button class="tab-btn" data-tab="tools">AI Tools</button>
   </div>
 
   <!-- ========== Tab 1: Basic Settings ========== -->
@@ -379,7 +438,7 @@
         <button class="reset-link" id="reset-synthesis-prompt">Reset to default</button>
       </div>
       <div class="hint" style="margin-top:-8px;margin-bottom:8px;">
-        After all papers are extracted, this prompt drives the cross-paper synthesis with full context. Use <code>{question}</code> for the user's question, <code>{understanding}</code> for the question analysis, and <code>{count}</code> for the number of papers.
+        After all papers are extracted, this prompt drives the cross-paper synthesis. Use <code>{question}</code> for the user's question, <code>{understanding}</code> for the question analysis, <code>{extractions}</code> for all per-paper extraction results, and <code>{count}</code> for the number of papers.
       </div>
       <div class="field">
         <textarea id="synthesis-prompt" rows="10"></textarea>
@@ -397,6 +456,126 @@
       <div class="field">
         <textarea id="follow-up-prompt" rows="10"></textarea>
       </div>
+    </div>
+
+  </div>
+
+  <!-- ========== Tab 4: AI Tools ========== -->
+  <div id="tab-tools" class="tab-panel">
+
+    <div class="section">
+      <div class="section-title">AI Tool Calling</div>
+      <div class="hint" style="margin-top:-8px;margin-bottom:10px;">
+        During follow-up questions in multi-paper analysis, the AI can autonomously call these tools to gather additional context.
+        Disable tools you don't need to reduce token usage and simplify AI behavior. All tools are read-only.
+      </div>
+      <div class="tool-actions">
+        <button id="tools-select-all" class="btn-sm" type="button">Select All</button>
+        <button id="tools-select-none" class="btn-sm" type="button">Deselect All</button>
+      </div>
+
+      <div class="tool-group-title">📄 Analysis Set Tools</div>
+      <div class="hint" style="margin-top:-4px;margin-bottom:8px;">Operate on the papers currently loaded for multi-paper analysis.</div>
+
+      <label class="tool-item">
+        <input type="checkbox" id="tool-load_paper_fulltext" checked />
+        <div class="tool-info">
+          <div class="tool-name">load_paper_fulltext <span class="tool-badge analysis">Analysis</span></div>
+          <div class="tool-desc">Load the full text of a paper. Use when the extraction summary lacks details.</div>
+        </div>
+      </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-rag_deep_search" checked />
+        <div class="tool-info">
+          <div class="tool-name">rag_deep_search <span class="tool-badge analysis">Analysis</span></div>
+          <div class="tool-desc">Search for specific passages within analysis papers using keyword retrieval.</div>
+        </div>
+      </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-get_paper_metadata" checked />
+        <div class="tool-info">
+          <div class="tool-name">get_paper_metadata <span class="tool-badge analysis">Analysis</span></div>
+          <div class="tool-desc">Get detailed bibliographic metadata (authors, year, journal, DOI, abstract).</div>
+        </div>
+      </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-get_item_notes" checked />
+        <div class="tool-info">
+          <div class="tool-name">get_item_notes <span class="tool-badge analysis">Analysis</span></div>
+          <div class="tool-desc">Get user-created notes attached to a paper in the analysis set.</div>
+        </div>
+      </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-get_item_annotations" checked />
+        <div class="tool-info">
+          <div class="tool-name">get_item_annotations <span class="tool-badge analysis">Analysis</span></div>
+          <div class="tool-desc">Get PDF highlights and annotations with comments and page numbers.</div>
+        </div>
+      </label>
+
+      <div class="tool-group-title">📚 Library-wide Tools</div>
+      <div class="hint" style="margin-top:-4px;margin-bottom:8px;">Operate on the entire Zotero library. Useful for discovering related work and exploring collections.</div>
+
+      <label class="tool-item">
+        <input type="checkbox" id="tool-list_collections" checked />
+        <div class="tool-info">
+          <div class="tool-name">list_collections <span class="tool-badge library">Library</span></div>
+          <div class="tool-desc">List all collections (folders) in the Zotero library with hierarchy.</div>
+        </div>
+      </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-list_collection_items" checked />
+        <div class="tool-info">
+          <div class="tool-name">list_collection_items <span class="tool-badge library">Library</span></div>
+          <div class="tool-desc">List items in a specific collection. Supports lookup by ID or name.</div>
+        </div>
+      </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-search_library" checked />
+        <div class="tool-info">
+          <div class="tool-name">search_library <span class="tool-badge library">Library</span></div>
+          <div class="tool-desc">Search the entire Zotero library by title, author, or year.</div>
+        </div>
+      </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-get_items_by_tag" checked />
+        <div class="tool-info">
+          <div class="tool-name">get_items_by_tag <span class="tool-badge library">Library</span></div>
+          <div class="tool-desc">Get all library items that have a specific tag.</div>
+        </div>
+      </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-list_tags" checked />
+        <div class="tool-info">
+          <div class="tool-name">list_tags <span class="tool-badge library">Library</span></div>
+          <div class="tool-desc">List all tags in the library, optionally filtered by substring.</div>
+        </div>
+      </label>
+
+      <div class="tool-group-title">⚙️ Analysis Set Management</div>
+      <div class="hint" style="margin-top:-4px;margin-bottom:8px;">Modify the current analysis session: add or remove papers, rebuild search indices.</div>
+
+      <label class="tool-item">
+        <input type="checkbox" id="tool-remove_paper" checked />
+        <div class="tool-info">
+          <div class="tool-name">remove_paper <span class="tool-badge analysis">Analysis</span></div>
+          <div class="tool-desc">Remove a paper from the analysis set (session only, not from Zotero).</div>
+        </div>
+      </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-add_paper_to_analysis" checked />
+        <div class="tool-info">
+          <div class="tool-name">add_paper_to_analysis <span class="tool-badge analysis">Analysis</span></div>
+          <div class="tool-desc">Add a Zotero item to the analysis set by ID (from search/collection results). Auto-builds RAG index.</div>
+        </div>
+      </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-rebuild_paper_rag" checked />
+        <div class="tool-info">
+          <div class="tool-name">rebuild_paper_rag <span class="tool-badge analysis">Analysis</span></div>
+          <div class="tool-desc">Force rebuild the RAG search index for a paper.</div>
+        </div>
+      </label>
     </div>
 
   </div>
