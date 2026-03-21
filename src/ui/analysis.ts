@@ -99,6 +99,14 @@ function getSettings() {
 
 你是一个专门针对各类学术问题进行针对性解答的AI专家。你精通研究问题的逻辑拆解和核心概念的精准界定。所有分析必须严谨、客观、无歧义。
 
+## Context: 待分析论文集
+
+用户准备基于以下 {count} 篇论文来回答研究问题。后续流程会逐篇将论文原文发送给你进行信息提取，当前阶段你只需了解论文的基本元信息，以便更有针对性地拆解问题。
+
+"""
+{paper_list}
+"""
+
 ## Task: 问题解构与概念澄清
 
 用户提出了以下研究问题：
@@ -106,7 +114,7 @@ function getSettings() {
 {question}
 """
 
-请严格按照以下步骤对该问题进行深度解析：
+请结合上述论文集的研究方向和领域，严格按照以下步骤对该问题进行深度解析：
 
 ### 1. 核心意图分析
 判断该问题的类型（概念类「是什么」/ 动机类「为什么」/ 存在类「有没有」/ 对比类「有何区别」/ 复合类），提取清晰、客观的核心诉求，理解用户真正想要知道什么。
@@ -116,6 +124,7 @@ function getSettings() {
 - 尽可能使用清晰的自然语言表述概念，能定量的必须定量（尤其是形容词或修饰性名词）。技术概念能用数学思想表述的必须用数学思想表述。
 - 检查提问中使用的词汇是否为标准学术概念。若发现非标准用词，必须指出并提供标准学术术语。
 - 对模糊概念给出一个无歧义的工作定义，作为后续分析的基准（兜底定义机制）。
+- 结合论文集的研究方向，判断关键词在该领域中的具体含义。
 
 ### 3. 衍生问题拆解
 采用"打破砂锅问到底"的原则追根溯源，罗列出一系列与问题来龙去脉相关的基本或衍生子问题：
@@ -124,10 +133,11 @@ function getSettings() {
 - 其他帮助回答总问题的原子化子问题
 - 每个子问题应尽量短，不涉及过多概念，确保是基本的原子问题
 - 这些子问题必须能构成一条清晰的回答脉络
+- 对每个子问题编号（Q1, Q2, Q3...），后续各阶段将统一引用这些编号
 
 ### 4. 问题理解总结
 将以上分析凝练为一段结构化总结，严格使用如下格式：
-> "用户提出了一个关于[xxx]的问题。核心关键词包括：1.[xxx] 2.[xxx]...。其中[xxx]是无歧义的专业学术术语，[xxx]可能存在歧义需要澄清，消除歧义后的工作定义为[xxx]。综合分析，用户的核心目的是[xxx]。为全面、透彻地回答此问题，需要逐一解答以下子问题：1.[xxx] 2.[xxx]..."
+> "用户提出了一个关于[xxx]的问题。核心关键词包括：1.[xxx] 2.[xxx]...。其中[xxx]是无歧义的专业学术术语，[xxx]可能存在歧义需要澄清，消除歧义后的工作定义为[xxx]。综合分析，用户的核心目的是[xxx]。为全面、透彻地回答此问题，需要逐一解答以下子问题：Q1.[xxx] Q2.[xxx]..."
 
 请使用与用户问题相同的语言输出。`;
 
@@ -137,7 +147,7 @@ function getSettings() {
 
 ## Context: 问题理解
 
-以下是对用户研究问题的深度分析：
+以下是对用户研究问题的深度分析（包含编号子问题 Q1, Q2, Q3...）：
 """
 {understanding}
 """
@@ -159,14 +169,20 @@ function getSettings() {
 5. **局限性**：已知局限（若原文未提及，标注"未提及"并分析可能原因及对解答本问题的影响）
 6. **可复现性**：代码/数据是否公开
 
-### Part B: 问题相关性锚定
-结合上述问题理解中的核心概念和子问题，判定该文献的相关性：
-- 逐一检查每个子问题，标注该文献是否包含相关信息
-- 若相关，提取具体细节和证据，注意概念定义的定量一致性
-- 若该文献与问题确实不相关，明确指出并给出理由，建议用户考虑剔除
+### Part B: 子问题逐一回答
+逐一检查问题理解中的每个子问题（Q1, Q2, Q3...），基于该论文原文内容给出回答：
+- **若该论文包含相关信息**：给出基于本文的初步回答，引用具体内容作为证据，注意概念定义的定量一致性
+- **若该论文未涉及该子问题**：标注"本文未涉及"
+- 格式要求：按 Q1, Q2, Q3... 的编号逐一回答，确保与问题理解中的编号对应
 
-### Part C: 关键信息凝练
-将提取的核心内容及与问题相关的要点凝练成一段简短总结备用。
+### Part C: 相关性综合判定
+基于 Part A 和 Part B 的分析结果，对该文献做出整体相关性判定：
+- **高度相关**：能回答多个子问题，核心内容与研究问题直接对应
+- **部分相关**：仅涉及部分子问题或提供间接支撑
+- **不相关**：与研究问题基本无关，建议用户从分析集中剔除该文献，并给出理由
+
+### Part D: 关键信息凝练
+将提取的核心内容及子问题回答要点凝练成一段简短总结备用。
 
 请使用与用户问题相同的语言输出。若原文未提及某项信息，客观标注"未提及"，切勿编造。`;
 
@@ -287,6 +303,7 @@ function getSettings() {
     ragChunksPerQuery: Math.max(5, Math.min(60, parseInt(ragChunksStr, 10) || 30)),
     ragMaxChunksPerPaper: Math.max(1, Math.min(10, parseInt(ragPerPaperStr, 10) || 3)),
     enabledTools,
+    maxToolRounds: Math.max(1, Math.min(100, parseInt((Z.Prefs.get(`${pfx}.maxToolRounds`, true) as string) || "15", 10) || 15)),
   };
 }
 
@@ -756,11 +773,15 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
   }
   scrollToBottom();
 
-  // === Phase 2: Question Understanding (AI call) ===
+  // === Phase 2: Question Understanding (AI call, with paper metadata) ===
   const quBubble = addMessageBubble("system", `<strong>🧠 Phase 2/4 — Analyzing research question...</strong>`);
   scrollToBottom();
 
-  const quPrompt = settings.questionUnderstandingPrompt.replace(/\{question\}/g, userPrompt);
+  const paperMetaList = buildPaperInfoSection();
+  const quPrompt = settings.questionUnderstandingPrompt
+    .replace(/\{question\}/g, userPrompt)
+    .replace(/\{paper_list\}/g, paperMetaList)
+    .replace(/\{count\}/g, String(allPdfs.length));
   try {
     questionUnderstandingDoc = await callAI(settings, [{ role: "user" as const, parts: [{ text: quPrompt }] }]);
     quBubble.innerHTML = `✅ Phase 2/4 — Question analysis complete.`;
@@ -923,7 +944,6 @@ interface ToolCall {
   id: string;
 }
 
-const MAX_TOOL_ROUNDS = 5;
 const FULLTEXT_MAX_CHARS = 80000;
 
 function formatZoteroItemSummary(item: any): string {
@@ -947,134 +967,54 @@ function formatZoteroItemSummary(item: any): string {
 }
 
 function getToolDefs(): ToolDef[] {
-  const paperList = papers.map((p, i) => `${i + 1}. "${p.title}"`).join("; ");
   return [
-    // ── Analysis-set tools ──
-    {
-      name: "load_paper_fulltext",
-      description: `Load the full text of a specific paper for in-depth analysis. Use when the extraction summary lacks details you need. Papers: ${paperList}`,
-      parameters: {
-        type: "object",
-        properties: { paper_index: { type: "number", description: "1-based paper index" } },
-        required: ["paper_index"],
-      },
-    },
-    {
-      name: "rag_deep_search",
-      description: "Search for specific passages within the analysis papers using keyword retrieval. Returns original text chunks most relevant to the query.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Search query with specific academic terms" },
-          paper_index: { type: "number", description: "Optional 1-based paper index to search only one paper. Omit to search all." },
-        },
-        required: ["query"],
-      },
-    },
-    {
-      name: "get_paper_metadata",
-      description: "Get detailed bibliographic metadata (authors, year, journal, DOI, abstract) of an analysis paper.",
-      parameters: {
-        type: "object",
-        properties: { paper_index: { type: "number", description: "1-based paper index" } },
-        required: ["paper_index"],
-      },
-    },
-    {
-      name: "get_item_notes",
-      description: "Get user-created notes attached to a paper in the analysis set.",
-      parameters: {
-        type: "object",
-        properties: { paper_index: { type: "number", description: "1-based paper index" } },
-        required: ["paper_index"],
-      },
-    },
-    {
-      name: "get_item_annotations",
-      description: "Get PDF highlights and annotations (with comments and page numbers) for a paper in the analysis set.",
-      parameters: {
-        type: "object",
-        properties: { paper_index: { type: "number", description: "1-based paper index" } },
-        required: ["paper_index"],
-      },
-    },
-    // ── Library-wide tools ──
-    {
-      name: "list_collections",
-      description: "List all collections (folders) in the Zotero library with hierarchy. No parameters needed.",
-      parameters: { type: "object", properties: {}, required: [] },
-    },
-    {
-      name: "list_collection_items",
-      description: "List items in a Zotero collection. Use list_collections first to find IDs.",
-      parameters: {
-        type: "object",
-        properties: {
-          collection_id: { type: "number", description: "Collection ID from list_collections" },
-          collection_name: { type: "string", description: "Collection name (alternative to ID, supports partial match)" },
-        },
-        required: [],
-      },
-    },
-    {
-      name: "search_library",
-      description: "Search the entire Zotero library by title, author, or year keywords.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Search keywords" },
-          limit: { type: "number", description: "Max results (default 20, max 50)" },
-        },
-        required: ["query"],
-      },
-    },
-    {
-      name: "get_items_by_tag",
-      description: "Get all Zotero library items that have a specific tag.",
-      parameters: {
-        type: "object",
-        properties: { tag: { type: "string", description: "Exact tag name" } },
-        required: ["tag"],
-      },
-    },
-    {
-      name: "list_tags",
-      description: "List all tags used in the Zotero library, optionally filtered by a substring.",
-      parameters: {
-        type: "object",
-        properties: { filter: { type: "string", description: "Optional substring to filter tag names" } },
-        required: [],
-      },
-    },
-    // ── Analysis-set management tools ──
-    {
-      name: "remove_paper",
-      description: "Remove a paper from the current analysis set. Use when a paper is determined to be irrelevant. The paper is only removed from this session, not from Zotero.",
-      parameters: {
-        type: "object",
-        properties: { paper_index: { type: "number", description: "1-based paper index to remove" } },
-        required: ["paper_index"],
-      },
-    },
-    {
-      name: "add_paper_to_analysis",
-      description: "Add a Zotero item to the current analysis set by its Zotero item ID (found via search_library, list_collection_items, or get_items_by_tag). Builds RAG index automatically.",
-      parameters: {
-        type: "object",
-        properties: { item_id: { type: "number", description: "Zotero item ID (the [ID:xxx] number from search results)" } },
-        required: ["item_id"],
-      },
-    },
-    {
-      name: "rebuild_paper_rag",
-      description: "Force rebuild the RAG index for a paper in the analysis set. Use if the index seems outdated or search results are poor.",
-      parameters: {
-        type: "object",
-        properties: { paper_index: { type: "number", description: "1-based paper index" } },
-        required: ["paper_index"],
-      },
-    },
+    { name: "load_paper_fulltext", description: "Load full text of a paper", parameters: { type: "object", properties: { paper_index: { type: "number" } }, required: ["paper_index"] } },
+    { name: "rag_deep_search", description: "Keyword search in papers", parameters: { type: "object", properties: { query: { type: "string" }, paper_index: { type: "number" } }, required: ["query"] } },
+    { name: "get_paper_metadata", description: "Get paper metadata", parameters: { type: "object", properties: { paper_index: { type: "number" } }, required: ["paper_index"] } },
+    { name: "get_item_notes", description: "Get notes on a paper", parameters: { type: "object", properties: { paper_index: { type: "number" } }, required: ["paper_index"] } },
+    { name: "get_item_annotations", description: "Get PDF annotations", parameters: { type: "object", properties: { paper_index: { type: "number" } }, required: ["paper_index"] } },
+    { name: "list_collections", description: "List Zotero collections", parameters: { type: "object", properties: {}, required: [] } },
+    { name: "list_collection_items", description: "List items in a collection", parameters: { type: "object", properties: { collection_id: { type: "number" }, collection_name: { type: "string" } }, required: [] } },
+    { name: "search_library", description: "Search Zotero library", parameters: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] } },
+    { name: "get_items_by_tag", description: "Find items by tag", parameters: { type: "object", properties: { tag: { type: "string" } }, required: ["tag"] } },
+    { name: "list_tags", description: "List all tags", parameters: { type: "object", properties: { filter: { type: "string" } }, required: [] } },
+    { name: "remove_paper", description: "Remove paper from analysis", parameters: { type: "object", properties: { paper_index: { type: "number" } }, required: ["paper_index"] } },
+    { name: "add_paper_to_analysis", description: "Add item to analysis by ID", parameters: { type: "object", properties: { item_id: { type: "number" } }, required: ["item_id"] } },
+    { name: "rebuild_paper_rag", description: "Rebuild RAG index", parameters: { type: "object", properties: { paper_index: { type: "number" } }, required: ["paper_index"] } },
   ];
+}
+
+function buildToolContextPrompt(tools: ToolDef[]): string {
+  const paperLines = papers.map((p, i) => `  ${i + 1}. "${p.title}"`).join("\n");
+  const enabled = new Set(tools.map(t => t.name));
+
+  let ctx = `## Available Tools\nAnalysis papers (paper_index is 1-based):\n${paperLines}\n\n`;
+
+  const analysisTools: string[] = [];
+  const libraryTools: string[] = [];
+  const mgmtTools: string[] = [];
+
+  if (enabled.has("load_paper_fulltext")) analysisTools.push("load_paper_fulltext(paper_index) — load paper full text for detailed reading");
+  if (enabled.has("rag_deep_search")) analysisTools.push("rag_deep_search(query, paper_index?) — keyword search in papers, omit paper_index to search all");
+  if (enabled.has("get_paper_metadata")) analysisTools.push("get_paper_metadata(paper_index) — authors, year, journal, DOI, abstract");
+  if (enabled.has("get_item_notes")) analysisTools.push("get_item_notes(paper_index) — user-created notes attached to paper");
+  if (enabled.has("get_item_annotations")) analysisTools.push("get_item_annotations(paper_index) — PDF highlights and annotations with page numbers");
+
+  if (enabled.has("list_collections")) libraryTools.push("list_collections() — list Zotero collection hierarchy");
+  if (enabled.has("list_collection_items")) libraryTools.push("list_collection_items(collection_id or collection_name) — list items in a collection");
+  if (enabled.has("search_library")) libraryTools.push("search_library(query, limit?) — search library by title/author/year");
+  if (enabled.has("get_items_by_tag")) libraryTools.push("get_items_by_tag(tag) — find items by exact tag name");
+  if (enabled.has("list_tags")) libraryTools.push("list_tags(filter?) — list all tags, optionally filtered");
+
+  if (enabled.has("remove_paper")) mgmtTools.push("remove_paper(paper_index) — remove paper from analysis (session only)");
+  if (enabled.has("add_paper_to_analysis")) mgmtTools.push("add_paper_to_analysis(item_id) — add Zotero item by ID [ID:xxx], auto-builds RAG");
+  if (enabled.has("rebuild_paper_rag")) mgmtTools.push("rebuild_paper_rag(paper_index) — force rebuild search index");
+
+  if (analysisTools.length) ctx += "**Paper tools:**\n" + analysisTools.map(t => `- ${t}`).join("\n") + "\n";
+  if (libraryTools.length) ctx += "**Library tools:**\n" + libraryTools.map(t => `- ${t}`).join("\n") + "\n";
+  if (mgmtTools.length) ctx += "**Management tools:**\n" + mgmtTools.map(t => `- ${t}`).join("\n") + "\n";
+
+  return ctx;
 }
 
 async function executeTool(name: string, args: Record<string, any>, settings: ReturnType<typeof getSettings>): Promise<string> {
@@ -1481,10 +1421,11 @@ async function runToolCallLoop(
   tools: ToolDef[],
   onToolCall?: (tc: ToolCall) => void,
   onToolResult?: (tc: ToolCall, result: string) => void,
-): Promise<string> {
+): Promise<{ text: string; hitLimit: boolean }> {
   const rounds: { calls: ToolCall[]; results: string[] }[] = [];
+  const maxRounds = settings.maxToolRounds;
 
-  for (let r = 0; r < MAX_TOOL_ROUNDS; r++) {
+  for (let r = 0; r < maxRounds; r++) {
     const payload = buildPayloadWithTools(settings, chatMsgs, userParts, rounds, tools);
     const res = await fetchWithRetry(
       buildEndpoint(settings, false),
@@ -1493,7 +1434,7 @@ async function runToolCallLoop(
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
     const parsed = parseToolResponse(settings, await res.json());
 
-    if (parsed.type === "text") return parsed.text;
+    if (parsed.type === "text") return { text: cleanToolLeakage(parsed.text), hitLimit: false };
 
     const results: string[] = [];
     for (const tc of parsed.toolCalls) {
@@ -1505,15 +1446,24 @@ async function runToolCallLoop(
     rounds.push({ calls: parsed.toolCalls, results });
   }
 
-  const payload = buildPayloadWithTools(settings, chatMsgs, userParts, rounds, null);
+  const payload = buildPayloadWithTools(settings, chatMsgs, userParts, rounds, tools);
   const res = await fetchWithRetry(
     buildEndpoint(settings, false),
     { method: "POST", headers: buildHeaders(settings), body: JSON.stringify(payload) },
   );
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   const json: any = await res.json();
-  if (settings.provider === "gemini") return json?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  return json?.choices?.[0]?.message?.content || "";
+  const parsed = parseToolResponse(settings, json);
+  const raw = parsed.type === "text" ? parsed.text : "";
+  return { text: cleanToolLeakage(raw), hitLimit: true };
+}
+
+function cleanToolLeakage(text: string): string {
+  return text
+    .replace(/<\s*\|?\s*(?:DSML|tool_call|function_call)[^>]*>[\s\S]*?<\s*\/\s*\|?\s*(?:DSML|tool_call|function_call)[^>]*>/gi, "")
+    .replace(/```(?:xml|json)?\s*<\s*(?:function_call|tool_call|invoke)[\s\S]*?```/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 // ---------- Follow-up message ----------
@@ -1535,6 +1485,10 @@ async function handleFollowUp(userPrompt: string, settings: ReturnType<typeof ge
 
   const allTools = getToolDefs();
   const tools = allTools.filter(t => settings.enabledTools.has(t.name));
+
+  if (tools.length > 0) {
+    userParts.unshift({ text: buildToolContextPrompt(tools) });
+  }
 
   if (tools.length === 0) {
     const contents: any[] = [];
@@ -1561,8 +1515,9 @@ async function handleFollowUp(userPrompt: string, settings: ReturnType<typeof ge
   let toolCount = 0;
 
   let finalText: string;
+  let hitLimit = false;
   try {
-    finalText = await runToolCallLoop(
+    const result = await runToolCallLoop(
       settings, chatMsgs, userParts, tools,
       (tc) => {
         toolCount++;
@@ -1595,6 +1550,8 @@ async function handleFollowUp(userPrompt: string, settings: ReturnType<typeof ge
         scrollToBottom();
       },
     );
+    finalText = result.text;
+    hitLimit = result.hitLimit;
   } catch (e: any) {
     if (toolCount > 0) {
       toolBubble.innerHTML += `<br><span style="color:#ea4335;">❌ Error: ${esc(e?.message || String(e))}</span>`;
@@ -1605,7 +1562,11 @@ async function handleFollowUp(userPrompt: string, settings: ReturnType<typeof ge
   }
 
   if (toolCount > 0) {
-    toolBubble.innerHTML = `🔧 Used ${toolCount} tool call(s) to gather additional context.`;
+    let toolSummary = `🔧 Used ${toolCount} tool call(s) to gather additional context.`;
+    if (hitLimit) {
+      toolSummary += `<br><span style="color:#f9ab00;">⚠️ Tool call limit reached (${settings.maxToolRounds} rounds). AI may not have finished gathering all information. You can increase the limit in Settings → AI Tools → Max Tool Call Rounds.</span>`;
+    }
+    toolBubble.innerHTML = toolSummary;
   } else {
     toolBubble.remove();
   }

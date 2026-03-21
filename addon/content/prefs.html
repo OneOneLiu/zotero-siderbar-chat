@@ -412,7 +412,7 @@
         <button class="reset-link" id="reset-question-understanding-prompt">Reset to default</button>
       </div>
       <div class="hint" style="margin-top:-8px;margin-bottom:8px;">
-        Before extracting from papers, the AI first analyzes the research question to identify core concepts, clarify ambiguities, and generate sub-questions. This understanding document guides all subsequent steps. Use <code>{question}</code> as a placeholder for the user's research question.
+        The AI first analyzes the research question along with paper metadata to identify core concepts, clarify ambiguities, and generate numbered sub-questions (Q1, Q2...). This understanding document guides all subsequent steps. Use <code>{question}</code> for the research question, <code>{paper_list}</code> for paper metadata, and <code>{count}</code> for the number of papers.
       </div>
       <div class="field">
         <textarea id="question-understanding-prompt" rows="10"></textarea>
@@ -425,7 +425,7 @@
         <button class="reset-link" id="reset-extraction-prompt">Reset to default</button>
       </div>
       <div class="hint" style="margin-top:-8px;margin-bottom:8px;">
-        This prompt is sent to the AI for each paper to extract structured information, guided by the question understanding from phase ②. Use <code>{question}</code> for the user's question and <code>{understanding}</code> for the question analysis output.
+        This prompt is sent to the AI for each paper to extract structured information and answer each sub-question (Q1, Q2...) from phase ②. Use <code>{question}</code> for the user's question and <code>{understanding}</code> for the question analysis output.
       </div>
       <div class="field">
         <textarea id="extraction-prompt" rows="10"></textarea>
@@ -469,6 +469,13 @@
         During follow-up questions in multi-paper analysis, the AI can autonomously call these tools to gather additional context.
         Disable tools you don't need to reduce token usage and simplify AI behavior. All tools are read-only.
       </div>
+
+      <div class="field-row" style="margin-bottom:12px;">
+        <label for="maxToolRounds">Max Tool Call Rounds</label>
+        <input type="number" id="maxToolRounds" min="1" max="100" value="15" style="width:70px;" />
+        <span class="hint" style="margin-left:8px;">How many rounds of tool calls the AI can make per response (1–100, default 15).</span>
+      </div>
+
       <div class="tool-actions">
         <button id="tools-select-all" class="btn-sm" type="button">Select All</button>
         <button id="tools-select-none" class="btn-sm" type="button">Deselect All</button>
