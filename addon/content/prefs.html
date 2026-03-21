@@ -612,6 +612,27 @@
           <div class="tool-desc">Get full metadata (authors, abstract, tags, collections, DOI...) for any Zotero item by ID.</div>
         </div>
       </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-get_collection_tag_stats" checked />
+        <div class="tool-info">
+          <div class="tool-name">get_collection_tag_stats <span class="tool-badge library">Library</span></div>
+          <div class="tool-desc">Get tag frequency statistics for a collection via SQL query (fast, sorted by count).</div>
+        </div>
+      </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-get_collection_stats" checked />
+        <div class="tool-info">
+          <div class="tool-name">get_collection_stats <span class="tool-badge library">Library</span></div>
+          <div class="tool-desc">Get collection summary: item types, year distribution, top authors, and top tags.</div>
+        </div>
+      </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-get_recent_items" checked />
+        <div class="tool-info">
+          <div class="tool-name">get_recent_items <span class="tool-badge library">Library</span></div>
+          <div class="tool-desc">List recently added items in the library (by days, default 7).</div>
+        </div>
+      </label>
 
       <div class="tool-group-title">⚙️ Analysis Set Management</div>
       <div class="hint" style="margin-top:-4px;margin-bottom:8px;">Modify the current analysis session: add or remove papers, rebuild search indices.</div>

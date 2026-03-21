@@ -601,13 +601,20 @@ function initForm(Zotero: any) {
     "list_collections", "list_collection_items", "search_library",
     "get_items_by_tag", "list_tags",
     "get_item_collections", "get_related_items", "get_item_details",
+    "get_collection_tag_stats", "get_collection_stats", "get_recent_items",
     "remove_paper", "add_paper_to_analysis", "rebuild_paper_rag",
   ];
 
   let enabledTools: Set<string>;
   try {
     const raw = load("enabledTools", "");
-    enabledTools = raw ? new Set(JSON.parse(raw) as string[]) : new Set(ALL_TOOL_NAMES);
+    if (raw) {
+      const saved = new Set(JSON.parse(raw) as string[]);
+      for (const t of ALL_TOOL_NAMES) { if (!saved.has(t)) saved.add(t); }
+      enabledTools = saved;
+    } else {
+      enabledTools = new Set(ALL_TOOL_NAMES);
+    }
   } catch {
     enabledTools = new Set(ALL_TOOL_NAMES);
   }

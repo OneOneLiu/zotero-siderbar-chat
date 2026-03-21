@@ -67,6 +67,26 @@
       border-top: 1px solid #e5e5e5;
       background: #fafafa;
     }
+    .sidebar-actions {
+      padding: 8px;
+      border-top: 1px solid #e5e5e5;
+      display: flex;
+      gap: 6px;
+    }
+    .sidebar-btn {
+      flex: 1;
+      padding: 6px 0;
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid #e5e5e5;
+      border-radius: 8px;
+      background: white;
+      color: #007AFF;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .sidebar-btn:hover { background: #f0f5ff; }
+    .sidebar-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
     /* --- Main chat area --- */
     .main {
@@ -184,6 +204,10 @@
   <div class="sidebar">
     <div class="sidebar-header">📊 Context Papers</div>
     <div id="paper-check-list" class="paper-check-list"></div>
+    <div class="sidebar-actions">
+      <button id="btn-load-session" class="sidebar-btn" title="Load a previous analysis session from a saved note">📂 Load Session</button>
+      <button id="btn-save-session" class="sidebar-btn" title="Save current session to note">💾 Save</button>
+    </div>
     <div class="sidebar-hint">All papers are automatically searched via RAG for follow-up questions.</div>
   </div>
   <div class="main">
