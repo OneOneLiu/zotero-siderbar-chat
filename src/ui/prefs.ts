@@ -2,6 +2,45 @@ import { config } from "../../package.json";
 import { PROVIDERS, GEMINI_MODELS, DEEPSEEK_MODELS, DOUBAO_MODELS } from "../constants";
 import { getProvider } from "../providers";
 
+interface UserPrefData { id: string; name: string; description: string; prompt: string; }
+
+const DEFAULT_USER_PREFERENCES: UserPrefData[] = [
+  {
+    id: "tech_route_comparison",
+    name: "技术路线深度对比",
+    description: "User prefers root-cause and first-principles reasoning when comparing technical approaches; wants logical explanations for why methods work or fail, not empirical effect descriptions",
+    prompt: `# 用户偏好：技术路线调研与深度对比
+
+当涉及调研、对比不同技术路线或方法时，请严格遵循以下原则组织回答：
+
+## 1. 问题根因分析
+- 必须从最底层的逻辑出发，揭示问题产生的本质原因
+- 不要从"效果差"等表面现象出发，要追问"为什么效果差"，直到触及根本机制
+- 例如：不要说"传统方法精度低"，而要说"传统方法基于X假设，而该假设在Y条件下不成立，因为..."
+
+## 2. 技术路线的有效性论证
+- 对每条技术路线，必须从道理上解释它为什么能解决问题的本质原因
+- 如果某技术路线只能解决表层问题而非根因，必须明确指出，并解释其局限性的逻辑原因
+- 避免"该方法效果好"这类空泛描述，要说清"该方法通过X机制直接解决了Y这一根因"
+
+## 3. 技术路线间的本质区别
+- 对比不同方法时，从逻辑和原理出发，而非从实验效果出发
+- 不要说"A比B效果好"，而要说"A和B的本质区别在于对X问题的建模方式不同：A假设...，B假设...，因此..."
+- 当指出某方法"不能做某事"时，必须给出逻辑层面的限制原因，而不是简单陈述"不能"
+- 尽量避免以计算效率、速度等次要工程因素作为主要对比维度
+
+## 4. 创新洞察的还原
+- 当讨论某个方法或技术的优越性时，要尝试还原作者的思考路径：
+  - 他们观察到了什么关键现象或矛盾？
+  - 为什么之前的研究者没有想到这个方向？之前的思维盲区是什么？
+  - 该方法的关键逻辑突破点是什么？
+  - 这个洞察为什么是自然且合理的（事后看）？
+
+## 总体原则
+始终以"为什么"驱动分析，层层追问因果链，确保每个论断都有逻辑支撑。回答应让读者理解技术演进背后的思维脉络，而不仅仅是技术细节的罗列。`,
+  },
+];
+
 const DEFAULT_QUESTION_UNDERSTANDING_PROMPT = `# Role: 资深学术研究助理
 
 你是一个专门针对各类学术问题进行针对性解答的AI专家。你精通研究问题的逻辑拆解和核心概念的精准界定。所有分析必须严谨、客观、无歧义。
@@ -561,6 +600,7 @@ function initForm(Zotero: any) {
     "get_item_notes", "get_item_annotations",
     "list_collections", "list_collection_items", "search_library",
     "get_items_by_tag", "list_tags",
+    "get_item_collections", "get_related_items", "get_item_details",
     "remove_paper", "add_paper_to_analysis", "rebuild_paper_rag",
   ];
 
@@ -607,6 +647,130 @@ function initForm(Zotero: any) {
     syncToolCheckboxes();
     saveToolPrefs();
   });
+
+  // ---- User Preferences ----
+  let userPrefs: UserPrefData[] = [];
+  try {
+    const raw = load("userPreferences", "");
+    if (raw) {
+      userPrefs = JSON.parse(raw) as UserPrefData[];
+    } else {
+      userPrefs = [...DEFAULT_USER_PREFERENCES];
+      save("userPreferences", JSON.stringify(userPrefs));
+    }
+  } catch {
+    userPrefs = [...DEFAULT_USER_PREFERENCES];
+    save("userPreferences", JSON.stringify(userPrefs));
+  }
+
+  const prefsList = $("user-prefs-list") as HTMLDivElement;
+  const prefIdInput = $("pref-id") as HTMLInputElement;
+  const prefNameInput = $("pref-name") as HTMLInputElement;
+  const prefDescInput = $("pref-description") as HTMLInputElement;
+  const prefPromptInput = $("pref-prompt") as HTMLTextAreaElement;
+  const prefAddBtn = $("pref-add-btn") as HTMLButtonElement;
+  const prefCancelBtn = $("pref-cancel-btn") as HTMLButtonElement;
+  const prefFormTitle = $("pref-form-title") as HTMLDivElement;
+
+  let editingPrefIdx = -1;
+
+  const generatePrefId = (name: string): string => {
+    const base = name
+      .toLowerCase()
+      .replace(/[^\w\s\u4e00-\u9fff]/g, "")
+      .replace(/[\s]+/g, "_")
+      .replace(/^_|_$/g, "")
+      .slice(0, 30) || "pref";
+    const suffix = Date.now().toString(36).slice(-4);
+    return `${base}_${suffix}`;
+  };
+
+  const saveUserPrefs = () => save("userPreferences", JSON.stringify(userPrefs));
+
+  const resetPrefForm = () => {
+    editingPrefIdx = -1;
+    prefIdInput.value = "";
+    prefNameInput.value = "";
+    prefDescInput.value = "";
+    prefPromptInput.value = "";
+    prefAddBtn.textContent = "Add";
+    prefCancelBtn.style.display = "none";
+    prefFormTitle.textContent = "Add New Preference";
+  };
+
+  const renderUserPrefs = () => {
+    prefsList.innerHTML = "";
+    userPrefs.forEach((p, index) => {
+      const card = document.createElement("div");
+      card.className = "pref-card";
+
+      const header = document.createElement("div");
+      header.className = "pref-card-header";
+      header.innerHTML = `<span class="pref-title">${escHtml(p.name)}</span><span class="pref-id">${escHtml(p.id)}</span>`;
+
+      const desc = document.createElement("div");
+      desc.className = "pref-card-desc";
+      desc.textContent = p.description;
+
+      const actions = document.createElement("div");
+      actions.className = "pref-card-actions";
+
+      const editBtn = document.createElement("button");
+      editBtn.textContent = "Edit";
+      editBtn.className = "btn-sm";
+      editBtn.onclick = () => {
+        editingPrefIdx = index;
+        prefIdInput.value = p.id;
+        prefNameInput.value = p.name;
+        prefDescInput.value = p.description;
+        prefPromptInput.value = p.prompt;
+        prefAddBtn.textContent = "Update";
+        prefCancelBtn.style.display = "inline-block";
+        prefFormTitle.textContent = "Edit Preference";
+      };
+
+      const delBtn = document.createElement("button");
+      delBtn.textContent = "Delete";
+      delBtn.className = "btn-sm btn-danger";
+      delBtn.onclick = () => {
+        if (editingPrefIdx === index) resetPrefForm();
+        else if (editingPrefIdx > index) editingPrefIdx--;
+        userPrefs.splice(index, 1);
+        saveUserPrefs();
+        renderUserPrefs();
+      };
+
+      actions.appendChild(editBtn);
+      actions.appendChild(delBtn);
+      card.appendChild(header);
+      card.appendChild(desc);
+      card.appendChild(actions);
+      prefsList.appendChild(card);
+    });
+  };
+
+  const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  prefAddBtn.addEventListener("click", () => {
+    const name = prefNameInput.value.trim();
+    const description = prefDescInput.value.trim();
+    const prompt = prefPromptInput.value.trim();
+    if (!name || !description || !prompt) return;
+
+    if (editingPrefIdx >= 0 && editingPrefIdx < userPrefs.length) {
+      const existingId = userPrefs[editingPrefIdx].id;
+      userPrefs[editingPrefIdx] = { id: existingId, name, description, prompt };
+    } else {
+      const id = generatePrefId(name);
+      userPrefs.push({ id, name, description, prompt });
+    }
+    saveUserPrefs();
+    renderUserPrefs();
+    resetPrefForm();
+  });
+
+  prefCancelBtn.addEventListener("click", resetPrefForm);
+  renderUserPrefs();
 }
 
 window.addEventListener("DOMContentLoaded", () => {

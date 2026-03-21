@@ -260,6 +260,39 @@
       letter-spacing: 0.5px;
     }
     .tool-group-title:first-child { margin-top: 0; }
+    .pref-card {
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 6px;
+      background: #fff;
+    }
+    .pref-card:hover { border-color: #9c27b0; }
+    .pref-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .pref-card-header .pref-title {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .pref-card-header .pref-id {
+      font-size: 11px;
+      color: #999;
+      font-family: monospace;
+    }
+    .pref-card-desc {
+      font-size: 11.5px;
+      color: #666;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    .pref-card-actions {
+      display: flex;
+      gap: 4px;
+      margin-top: 6px;
+    }
     .tool-actions {
       display: flex;
       gap: 8px;
@@ -519,6 +552,20 @@
           <div class="tool-desc">Get PDF highlights and annotations with comments and page numbers.</div>
         </div>
       </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-get_item_collections" checked />
+        <div class="tool-info">
+          <div class="tool-name">get_item_collections <span class="tool-badge analysis">Analysis</span></div>
+          <div class="tool-desc">Check which Zotero collections a paper belongs to, with full hierarchy path.</div>
+        </div>
+      </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-get_related_items" checked />
+        <div class="tool-info">
+          <div class="tool-name">get_related_items <span class="tool-badge analysis">Analysis</span></div>
+          <div class="tool-desc">Get items linked as "Related" in Zotero for a paper in the analysis set.</div>
+        </div>
+      </label>
 
       <div class="tool-group-title">📚 Library-wide Tools</div>
       <div class="hint" style="margin-top:-4px;margin-bottom:8px;">Operate on the entire Zotero library. Useful for discovering related work and exploring collections.</div>
@@ -558,6 +605,13 @@
           <div class="tool-desc">List all tags in the library, optionally filtered by substring.</div>
         </div>
       </label>
+      <label class="tool-item">
+        <input type="checkbox" id="tool-get_item_details" checked />
+        <div class="tool-info">
+          <div class="tool-name">get_item_details <span class="tool-badge library">Library</span></div>
+          <div class="tool-desc">Get full metadata (authors, abstract, tags, collections, DOI...) for any Zotero item by ID.</div>
+        </div>
+      </label>
 
       <div class="tool-group-title">⚙️ Analysis Set Management</div>
       <div class="hint" style="margin-top:-4px;margin-bottom:8px;">Modify the current analysis session: add or remove papers, rebuild search indices.</div>
@@ -583,6 +637,38 @@
           <div class="tool-desc">Force rebuild the RAG search index for a paper.</div>
         </div>
       </label>
+
+    </div>
+
+    <div class="section">
+      <div class="section-title">User Response Preferences</div>
+      <div class="hint" style="margin-top:-8px;margin-bottom:10px;">
+        Define custom response style guides. The AI sees only brief descriptions, and loads the full prompt only when it determines
+        the conversation topic matches. This keeps token usage low while enabling precise control over how the AI structures answers.
+      </div>
+
+      <div id="user-prefs-list"></div>
+
+      <div style="border:1px solid #ddd;border-radius:6px;padding:12px;margin-top:8px;background:#fafafa;">
+        <div style="font-weight:600;margin-bottom:8px;" id="pref-form-title">Add New Preference</div>
+        <input type="hidden" id="pref-id" />
+        <div class="field-row" style="margin-bottom:6px;">
+          <label for="pref-name" style="min-width:100px;">Name</label>
+          <input type="text" id="pref-name" placeholder="e.g. 技术路线深度对比、概念解释偏好、写作风格..." style="flex:1;" />
+        </div>
+        <div class="field-row" style="margin-bottom:6px;">
+          <label for="pref-description" style="min-width:100px;">Description</label>
+          <input type="text" id="pref-description" placeholder="一句话描述，AI 根据此判断是否需要加载该偏好" style="flex:1;" />
+        </div>
+        <div class="field-row" style="margin-bottom:8px;">
+          <label for="pref-prompt" style="min-width:100px;align-self:start;">Prompt</label>
+          <textarea id="pref-prompt" rows="10" placeholder="完整的偏好 prompt，指导 AI 如何组织回答..." style="flex:1;font-size:12px;"></textarea>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button id="pref-add-btn" class="btn-sm" type="button">Add</button>
+          <button id="pref-cancel-btn" class="btn-sm" type="button" style="display:none;">Cancel</button>
+        </div>
+      </div>
     </div>
 
   </div>

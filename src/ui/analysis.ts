@@ -51,7 +51,7 @@ function getMarkdown() {
   if (!md) {
     md = new MarkdownIt({ html: true, linkify: true, typographer: true, breaks: true });
     try {
-      md.use(tm, { engine: katex, delimiters: "dollars", katexOptions: { output: "html", throwOnError: false } });
+      md.use(tm, { engine: katex, delimiters: ["dollars", "brackets"], katexOptions: { output: "html", throwOnError: false } });
     } catch (_e) { /* optional */ }
   }
   return md;
@@ -279,6 +279,7 @@ function getSettings() {
     "get_item_notes", "get_item_annotations",
     "list_collections", "list_collection_items", "search_library",
     "get_items_by_tag", "list_tags",
+    "get_item_collections", "get_related_items", "get_item_details",
     "remove_paper", "add_paper_to_analysis", "rebuild_paper_rag",
   ];
   let enabledTools: Set<string>;
@@ -304,6 +305,12 @@ function getSettings() {
     ragMaxChunksPerPaper: Math.max(1, Math.min(10, parseInt(ragPerPaperStr, 10) || 3)),
     enabledTools,
     maxToolRounds: Math.max(1, Math.min(100, parseInt((Z.Prefs.get(`${pfx}.maxToolRounds`, true) as string) || "15", 10) || 15)),
+    userPreferences: (() => {
+      try {
+        const raw = Z.Prefs.get(`${pfx}.userPreferences`, true) as string;
+        return raw ? (JSON.parse(raw) as UserPreference[]) : [];
+      } catch { return []; }
+    })(),
   };
 }
 
@@ -724,12 +731,21 @@ function addMessageBubble(role: "user" | "model" | "system", html: string): HTML
   return el;
 }
 
+function normalizeMathDelimiters(src: string): string {
+  src = src.replace(/```(?:latex|math|tex)?\s*\n([\s\S]*?)```/g, (_m, p1) => `$$${p1.trim()}$$`);
+  src = src.replace(/\\\[([\s\S]*?)\\\]/g, (_m, p1) => `$$${p1}$$`);
+  src = src.replace(/\\\((.+?)\\\)/g, (_m, p1) => `$${p1}$`);
+  return src;
+}
+
 function renderMd(text: string): string {
-  try { return getMarkdown().render(text); } catch (_) { return esc(text); }
+  try { return getMarkdown().render(normalizeMathDelimiters(text)); } catch (_) { return esc(text); }
 }
 
 function esc(t: string) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 function escAttr(t: string) { return t.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+const MATH_FORMAT_INSTRUCTION = "Formatting rule: When writing mathematical formulas, always use $...$ for inline math and $$...$$ (on its own line) for display math. Never wrap formulas in code blocks (backticks). This is critical for correct rendering.";
 
 // ---------- First-message: full analysis pipeline ----------
 
@@ -783,7 +799,7 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
     .replace(/\{paper_list\}/g, paperMetaList)
     .replace(/\{count\}/g, String(allPdfs.length));
   try {
-    questionUnderstandingDoc = await callAI(settings, [{ role: "user" as const, parts: [{ text: quPrompt }] }]);
+    questionUnderstandingDoc = await callAI(settings, [{ role: "user" as const, parts: [{ text: quPrompt + "\n\n" + MATH_FORMAT_INSTRUCTION }] }]);
     quBubble.innerHTML = `✅ Phase 2/4 — Question analysis complete.`;
   } catch (e: any) {
     questionUnderstandingDoc = "";
@@ -861,7 +877,7 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
     }
 
     try {
-      const r = await callAI(settings, [{ role: "user", parts: [...ctx, { text: perPaperPrompt }] }], settings.extractionModel);
+      const r = await callAI(settings, [{ role: "user", parts: [...ctx, { text: perPaperPrompt + "\n\n" + MATH_FORMAT_INSTRUCTION }] }], settings.extractionModel);
       extractions[i] = `# Paper ${i + 1}: ${title}\n\n${r}`;
       pStatus[i] = "done";
     } catch (e: any) {
@@ -905,7 +921,7 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
     .replace(/\{extractions\}/g, analysisDoc || "(No extraction results available.)")
     .replace(/\{count\}/g, String(allPdfs.length));
 
-  const synthContents = [{ role: "user" as const, parts: [{ text: synthPrompt }] }];
+  const synthContents = [{ role: "user" as const, parts: [{ text: synthPrompt + "\n\n" + MATH_FORMAT_INSTRUCTION }] }];
 
   let fullMd = `<details><summary>📋 Per-paper Extractions (click to expand)</summary>\n\n${analysisDoc}\n\n</details>\n\n---\n\n`;
   progressBubble.innerHTML = `<strong>🔬 Phase 4/4 — Synthesizing cross-paper analysis...</strong>`;
@@ -931,6 +947,13 @@ async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeo
 }
 
 // ---------- Tool Use (Function Calling) ----------
+
+interface UserPreference {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+}
 
 interface ToolDef {
   name: string;
@@ -978,13 +1001,24 @@ function getToolDefs(): ToolDef[] {
     { name: "search_library", description: "Search Zotero library", parameters: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] } },
     { name: "get_items_by_tag", description: "Find items by tag", parameters: { type: "object", properties: { tag: { type: "string" } }, required: ["tag"] } },
     { name: "list_tags", description: "List all tags", parameters: { type: "object", properties: { filter: { type: "string" } }, required: [] } },
+    { name: "get_item_collections", description: "Which collections a paper belongs to", parameters: { type: "object", properties: { paper_index: { type: "number" } }, required: ["paper_index"] } },
+    { name: "get_related_items", description: "Get Zotero related items for a paper", parameters: { type: "object", properties: { paper_index: { type: "number" } }, required: ["paper_index"] } },
+    { name: "get_item_details", description: "Get full metadata of any Zotero item by ID", parameters: { type: "object", properties: { item_id: { type: "number" } }, required: ["item_id"] } },
     { name: "remove_paper", description: "Remove paper from analysis", parameters: { type: "object", properties: { paper_index: { type: "number" } }, required: ["paper_index"] } },
     { name: "add_paper_to_analysis", description: "Add item to analysis by ID", parameters: { type: "object", properties: { item_id: { type: "number" } }, required: ["item_id"] } },
     { name: "rebuild_paper_rag", description: "Rebuild RAG index", parameters: { type: "object", properties: { paper_index: { type: "number" } }, required: ["paper_index"] } },
   ];
 }
 
-function buildToolContextPrompt(tools: ToolDef[]): string {
+function getPreferenceToolDefs(settings: ReturnType<typeof getSettings>): ToolDef[] {
+  return settings.userPreferences.map(pref => ({
+    name: `pref_${pref.id}`,
+    description: pref.description,
+    parameters: { type: "object", properties: {}, required: [] },
+  }));
+}
+
+function buildToolContextPrompt(tools: ToolDef[], settings: ReturnType<typeof getSettings>): string {
   const paperLines = papers.map((p, i) => `  ${i + 1}. "${p.title}"`).join("\n");
   const enabled = new Set(tools.map(t => t.name));
 
@@ -1000,11 +1034,15 @@ function buildToolContextPrompt(tools: ToolDef[]): string {
   if (enabled.has("get_item_notes")) analysisTools.push("get_item_notes(paper_index) — user-created notes attached to paper");
   if (enabled.has("get_item_annotations")) analysisTools.push("get_item_annotations(paper_index) — PDF highlights and annotations with page numbers");
 
+  if (enabled.has("get_item_collections")) analysisTools.push("get_item_collections(paper_index) — which collections this paper belongs to, with full path");
+  if (enabled.has("get_related_items")) analysisTools.push("get_related_items(paper_index) — Zotero-linked related items");
+
   if (enabled.has("list_collections")) libraryTools.push("list_collections() — list Zotero collection hierarchy");
   if (enabled.has("list_collection_items")) libraryTools.push("list_collection_items(collection_id or collection_name) — list items in a collection");
   if (enabled.has("search_library")) libraryTools.push("search_library(query, limit?) — search library by title/author/year");
   if (enabled.has("get_items_by_tag")) libraryTools.push("get_items_by_tag(tag) — find items by exact tag name");
   if (enabled.has("list_tags")) libraryTools.push("list_tags(filter?) — list all tags, optionally filtered");
+  if (enabled.has("get_item_details")) libraryTools.push("get_item_details(item_id) — full metadata, tags, collections for any Zotero item by ID");
 
   if (enabled.has("remove_paper")) mgmtTools.push("remove_paper(paper_index) — remove paper from analysis (session only)");
   if (enabled.has("add_paper_to_analysis")) mgmtTools.push("add_paper_to_analysis(item_id) — add Zotero item by ID [ID:xxx], auto-builds RAG");
@@ -1013,6 +1051,15 @@ function buildToolContextPrompt(tools: ToolDef[]): string {
   if (analysisTools.length) ctx += "**Paper tools:**\n" + analysisTools.map(t => `- ${t}`).join("\n") + "\n";
   if (libraryTools.length) ctx += "**Library tools:**\n" + libraryTools.map(t => `- ${t}`).join("\n") + "\n";
   if (mgmtTools.length) ctx += "**Management tools:**\n" + mgmtTools.map(t => `- ${t}`).join("\n") + "\n";
+
+  const prefTools = tools.filter(t => t.name.startsWith("pref_"));
+  if (prefTools.length > 0) {
+    ctx += "\n**User response preferences** — These tools contain the user's preferred answer style for specific types of questions. ";
+    ctx += "If you judge that the current conversation involves a topic covered by one of these preferences, call the corresponding tool to load the full style guide, then follow it when composing your answer.\n";
+    for (const pt of prefTools) {
+      ctx += `- ${pt.name}() — ${pt.description}\n`;
+    }
+  }
 
   return ctx;
 }
@@ -1262,6 +1309,95 @@ async function executeTool(name: string, args: Record<string, any>, settings: Re
       }
     }
 
+    case "get_item_collections": {
+      if (idx < 0 || idx >= papers.length)
+        return `Error: Invalid paper_index. Valid: 1-${papers.length}.`;
+      try {
+        const item = Zotero.Items.get(papers[idx].id);
+        if (!item) return `Error: Item not found.`;
+        const parent = item.isAttachment?.() ? item.parentItem : item;
+        const collIDs: number[] = parent?.getCollections?.() || [];
+        if (collIDs.length === 0) return `Paper ${args.paper_index} ("${papers[idx].title}") does not belong to any collection (it may be in "Unfiled Items").`;
+        let out = `Paper ${args.paper_index} ("${papers[idx].title}") belongs to ${collIDs.length} collection(s):\n\n`;
+        for (const cid of collIDs) {
+          const coll = Zotero.Collections.get(cid);
+          if (!coll) continue;
+          const path: string[] = [];
+          let cur = coll;
+          while (cur) {
+            path.unshift(cur.name || `[ID:${cur.id}]`);
+            cur = cur.parentID ? Zotero.Collections.get(cur.parentID) : null;
+          }
+          let childCount = 0;
+          try { childCount = (coll.getChildItems?.(true, false) || []).length; } catch {}
+          out += `- [ID:${cid}] ${path.join(" / ")} (${childCount} items)\n`;
+        }
+        return out;
+      } catch (e: any) {
+        return `Error: ${e?.message || e}`;
+      }
+    }
+
+    case "get_related_items": {
+      if (idx < 0 || idx >= papers.length)
+        return `Error: Invalid paper_index. Valid: 1-${papers.length}.`;
+      try {
+        const item = Zotero.Items.get(papers[idx].id);
+        if (!item) return `Error: Item not found.`;
+        const parent = item.isAttachment?.() ? item.parentItem : item;
+        const relKeys: string[] = parent?.relatedItems || [];
+        if (relKeys.length === 0) return `Paper ${args.paper_index} ("${papers[idx].title}") has no related items in Zotero.`;
+        let out = `Related items for Paper ${args.paper_index} ("${papers[idx].title}"): ${relKeys.length}\n\n`;
+        for (const key of relKeys) {
+          try {
+            const rel = Zotero.Items.getByLibraryAndKey(parent.libraryID, key);
+            if (rel) out += formatZoteroItemSummary(rel) + "\n";
+            else out += `- (key: ${key}) — item not found\n`;
+          } catch {
+            out += `- (key: ${key}) — could not load\n`;
+          }
+        }
+        return out;
+      } catch (e: any) {
+        return `Error: ${e?.message || e}`;
+      }
+    }
+
+    case "get_item_details": {
+      try {
+        const itemId = args.item_id as number;
+        if (!itemId) return `Error: item_id is required.`;
+        const item = Zotero.Items.get(itemId);
+        if (!item) return `Error: Item ID ${itemId} not found.`;
+        const parent = item.isAttachment?.() ? item.parentItem : item;
+        if (!parent) return `Error: Cannot resolve parent item.`;
+        const fields: string[] = [];
+        fields.push(`ID: ${parent.id}`);
+        fields.push(`Title: ${parent.getField?.("title") || "(untitled)"}`);
+        const creators = parent.getCreators?.() || [];
+        if (creators.length > 0) fields.push(`Authors: ${creators.map((c: any) => `${c.firstName || ""} ${c.lastName || ""}`.trim()).join("; ")}`);
+        for (const f of ["year", "date", "publicationTitle", "journalAbbreviation", "volume", "issue", "pages", "DOI", "ISBN", "ISSN", "url", "abstractNote", "language", "itemType"]) {
+          try {
+            const v = parent.getField?.(f);
+            if (v) fields.push(`${f}: ${v}`);
+          } catch {}
+        }
+        const tags = parent.getTags?.() || [];
+        if (tags.length > 0) fields.push(`Tags: ${tags.map((t: any) => t.tag || t).join(", ")}`);
+        const collIDs: number[] = parent.getCollections?.() || [];
+        if (collIDs.length > 0) {
+          const collNames = collIDs.map((cid: number) => {
+            const c = Zotero.Collections.get(cid);
+            return c ? c.name : `[ID:${cid}]`;
+          });
+          fields.push(`Collections: ${collNames.join("; ")}`);
+        }
+        return fields.join("\n");
+      } catch (e: any) {
+        return `Error: ${e?.message || e}`;
+      }
+    }
+
     case "remove_paper": {
       if (idx < 0 || idx >= papers.length)
         return `Error: Invalid paper_index. Valid: 1-${papers.length}.`;
@@ -1333,8 +1469,15 @@ async function executeTool(name: string, args: Record<string, any>, settings: Re
       }
     }
 
-    default:
+    default: {
+      if (name.startsWith("pref_")) {
+        const prefId = name.slice(5);
+        const pref = settings.userPreferences.find(p => p.id === prefId);
+        if (pref) return `# User Response Preference: ${pref.name}\n\n${pref.prompt}`;
+        return `Error: Preference "${prefId}" not found.`;
+      }
       return `Unknown tool: ${name}`;
+    }
   }
 }
 
@@ -1477,17 +1620,21 @@ async function handleFollowUp(userPrompt: string, settings: ReturnType<typeof ge
   }
 
   const wrappedPrompt = settings.followUpPrompt.replace(/\{question\}/g, userPrompt);
-  const userParts: any[] = [...contextParts, { text: wrappedPrompt }];
+  const userParts: any[] = [...contextParts, { text: wrappedPrompt + "\n\n" + MATH_FORMAT_INSTRUCTION }];
 
   const chatMsgs = chatHistory
     .filter(m => m.role === "user" || m.role === "model")
     .map(m => ({ role: m.role, text: m.text }));
 
   const allTools = getToolDefs();
-  const tools = allTools.filter(t => settings.enabledTools.has(t.name));
+  const prefTools = getPreferenceToolDefs(settings);
+  const tools = [
+    ...allTools.filter(t => settings.enabledTools.has(t.name)),
+    ...prefTools,
+  ];
 
   if (tools.length > 0) {
-    userParts.unshift({ text: buildToolContextPrompt(tools) });
+    userParts.unshift({ text: buildToolContextPrompt(tools, settings) });
   }
 
   if (tools.length === 0) {
@@ -1538,7 +1685,18 @@ async function handleFollowUp(userPrompt: string, settings: ReturnType<typeof ge
           case "remove_paper": desc = `🗑️ Removing Paper ${pidx}${pTitle ? `: ${pTitle}` : ""}`; break;
           case "add_paper_to_analysis": desc = `➕ Adding item ID:${tc.args.item_id} to analysis`; break;
           case "rebuild_paper_rag": desc = `🔄 Rebuilding RAG for Paper ${pidx}${pTitle ? `: ${pTitle}` : ""}`; break;
-          default: desc = tc.name;
+          case "get_item_collections": desc = `📂 Checking collections for: ${pTitle}`; break;
+          case "get_related_items": desc = `🔗 Finding related items for: ${pTitle}`; break;
+          case "get_item_details": desc = `📋 Loading details for item ID:${tc.args.item_id}`; break;
+          default: {
+            if (tc.name.startsWith("pref_")) {
+              const prefId = tc.name.slice(5);
+              const pref = settings.userPreferences.find(p => p.id === prefId);
+              desc = `📖 Loading preference: ${pref?.name || prefId}`;
+            } else {
+              desc = tc.name;
+            }
+          }
         }
         toolBubble.innerHTML = `<strong>🔧 Tool #${toolCount}</strong>: ${esc(desc)}`;
         scrollToBottom();
