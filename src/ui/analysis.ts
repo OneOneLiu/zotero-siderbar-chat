@@ -686,14 +686,13 @@ async function saveAnalysisNote() {
 
     if (!note) {
       note = new Zotero.Item("note");
+      note.libraryID = Zotero.Libraries.userLibraryID;
       if (papers.length > 0) {
         const firstItem = Zotero.Items.get(papers[0]?.id);
         if (firstItem) {
           const parentId = firstItem.isAttachment?.() ? firstItem.parentID : firstItem.id;
           if (parentId) note.parentID = parentId;
         }
-      } else {
-        note.libraryID = Zotero.Libraries.userLibraryID;
       }
     }
 
@@ -750,6 +749,17 @@ ${chatHtml}`;
 
     note.setNote(html);
     await note.saveTx();
+
+    if (!savedNoteId && !note.parentID && standaloneCollectionInfo.id) {
+      try {
+        const coll = Zotero.Collections.get(standaloneCollectionInfo.id);
+        if (coll) {
+          coll.addItem(note.id);
+          await coll.saveTx();
+        }
+      } catch {}
+    }
+
     savedNoteId = note.id;
   } catch (_e) { /* save is non-critical */ }
 }
