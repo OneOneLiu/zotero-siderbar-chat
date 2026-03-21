@@ -6,6 +6,7 @@ import hljs from "highlight.js";
 import { config } from "../../package.json";
 import Addon, { ChatMessage } from "../addon";
 import { getSettings } from "./settings";
+import { buildSidebarToolContextPrompt } from "./sidebarToolPrompt";
 import { getLocaleID } from "../utils/locale";
 import {
   getProviderConfig,
@@ -14,6 +15,13 @@ import {
   DOUBAO_MODELS
 } from "../constants";
 import { getProvider } from "../providers";
+import {
+  hasRagIndex,
+  loadRagIndex,
+  buildRagIndexForItem,
+  type RagIndex,
+} from "./ragIndex";
+import { searchChunksBalanced } from "./ragSearch";
 
 Zotero.debug("[GeminiChat] Loading readerPane module...");
 
@@ -295,7 +303,12 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
   }
 
   try {
-    const itemKey = String(item.id);
+    // Stable key: parent item vs attachment both map to the same open PDF, so + context survives re-renders.
+    const openPdfForKey =
+      item.isAttachment() && item.attachmentContentType === "application/pdf"
+        ? item
+        : getBestAttachment(item);
+    const itemKey = openPdfForKey ? `pdf-${openPdfForKey.id}` : `item-${item.id}`;
     const messages = addon.getSession(itemKey);
     const doc = body.ownerDocument;
     const HTML_NS = "http://www.w3.org/1999/xhtml";
@@ -871,19 +884,6 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
       header.appendChild(promptBar);
     }
 
-    // --- Multi-paper Analysis Button ---
-    const analysisBar = createElement("div");
-    analysisBar.style.cssText = "padding: 2px 0 6px 0;";
-
-    const analysisBtn = createElement("button");
-    analysisBtn.setAttribute("class", "gemini-chat-prompt-chip");
-    analysisBtn.style.cssText = "background: #007AFF; color: white; border: none; width: 100%; text-align: center; font-weight: 600; padding: 8px 12px; border-radius: 16px;";
-    analysisBtn.textContent = "📊 Multi-paper Analysis";
-    analysisBtn.title = "Extract key info from each loaded paper, then run a cross-paper comparative analysis";
-    analysisBtn.onclick = () => handleMultiPaperAnalysis();
-    analysisBar.appendChild(analysisBtn);
-    header.appendChild(analysisBar);
-
     // --- Load History Button (if empty) ---
     if (messages.length === 0) {
       getHistoryNote(item).then(note => {
@@ -1303,27 +1303,26 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
           if (Array.isArray(selection)) {
             let addedCount = 0;
             selection.forEach((idOrItem: any) => {
-              const item = Zotero.Items.get(idOrItem) || idOrItem; // It might be ID or Item object
-              if (item instanceof Zotero.Item) {
-                // Logic to find PDF
-                let pdfItem: Zotero.Item | null = null;
-                if (item.isAttachment() && item.attachmentContentType === 'application/pdf') {
-                  pdfItem = item;
-                } else if (item.isRegularItem()) {
-                  const attachmentIDs = item.getAttachments();
-                  for (const id of attachmentIDs) {
-                    const att = Zotero.Items.get(id);
-                    if (att && !att.isNote() && att.attachmentContentType === 'application/pdf') {
-                      pdfItem = att;
-                      break;
-                    }
+              const zItem = coercePickerSelectionToItem(idOrItem);
+              if (!zItem) return;
+
+              let pdfItem: Zotero.Item | null = null;
+              if (zItem.isAttachment() && zItem.attachmentContentType === "application/pdf") {
+                pdfItem = zItem;
+              } else if (zItem.isRegularItem()) {
+                const attachmentIDs = zItem.getAttachments();
+                for (const id of attachmentIDs) {
+                  const att = Zotero.Items.get(id);
+                  if (att && !att.isNote() && att.attachmentContentType === "application/pdf") {
+                    pdfItem = att;
+                    break;
                   }
                 }
+              }
 
-                if (pdfItem) {
-                  addon.addContextItem(itemKey, pdfItem);
-                  addedCount++;
-                }
+              if (pdfItem) {
+                addon.addContextItem(itemKey, pdfItem);
+                addedCount++;
               }
             });
 
@@ -1368,6 +1367,10 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
       const text = (typeof overrideText === "string" ? overrideText : input.value).trim();
       if (!text || addon.isBusy(itemKey)) return;
 
+      const contextItems = addon.getContextItems(itemKey);
+      /** First user message in this session → full text of primary (reader) PDF; later turns use RAG for all. */
+      const isFirstUserQuestion = addon.getSession(itemKey).length === 0;
+
       addon.pushMessage(itemKey, {
         role: "user",
         text,
@@ -1408,10 +1411,6 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
         const history = addon.getSession(itemKey);
 
         // --- Multi-file Context Gathering ---
-        const contextItems = addon.getContextItems(itemKey);
-
-        // Include current item if appropriate (usually yes)
-        // Check if current item has PDF content?
         const currentAttachment = item.isAttachment() ? item : getBestAttachment(item);
 
         const allContextFiles: Zotero.Item[] = [];
@@ -1426,47 +1425,41 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
           }
         });
 
-        const contextParts: any[] = [];
+        const contextParts = await buildReaderSidebarRagContextParts(settings, text, allContextFiles, {
+          isFirstUserQuestion,
+        });
 
-        // Handle PDF context based on provider
-        if (settings.provider === "gemini") {
-          // Gemini: Send base64 PDF (multimodal support)
-          for (const pdfItem of allContextFiles) {
-            const part = await getPdfContextPart(pdfItem);
-            if (part) {
-              const title = pdfItem.getField("title") || pdfItem.parentItem?.getField("title") || "Untitled";
-              contextParts.push({ text: `[Context Document: ${title}]` });
-              contextParts.push({ inlineData: part });
-            }
-          }
-        } else {
-          // DeepSeek/Doubao: Extract and send PDF text
-          for (const pdfItem of allContextFiles) {
-            const pdfText = await getPdfText(pdfItem);
-            if (pdfText) {
-              const title = pdfItem.getField("title") || pdfItem.parentItem?.getField("title") || "Untitled";
-              const textContent = `[Context Document: ${title}]\n\n${pdfText}`;
-              contextParts.push({ text: textContent });
-            }
-          }
-        }
+        Zotero.debug(
+          `[GeminiChat] Sidebar send: key=${itemKey} chips=${contextItems.length} pdfs=${allContextFiles.length} firstFull=${isFirstUserQuestion} parts=${contextParts.length}`,
+        );
 
         const contents = history.slice(0, -1).map((msg, index) => {
           const parts: any[] = [{ text: msg.text }];
           return { role: msg.role, parts: parts };
         });
 
-        // Find last user message in 'contents' and prepend context
-        if (contents.length > 0 && contextParts.length > 0) {
-          let lastUserMsg = null;
+        // Last user turn: tool descriptions (same prefs as analysis window) + PDF/context parts + question.
+        // No 4-phase pipeline — plain multimodal/text request like the reader always did.
+        if (contents.length > 0) {
+          let lastUserMsg: { role: string; parts: any[] } | null = null;
           for (let i = contents.length - 1; i >= 0; i--) {
-            if (contents[i].role === 'user') {
+            if (contents[i].role === "user") {
               lastUserMsg = contents[i];
               break;
             }
           }
           if (lastUserMsg) {
-            lastUserMsg.parts.unshift(...contextParts);
+            const paperTitles = allContextFiles.map(
+              (pdf) =>
+                pdf.getField("title") ||
+                (pdf.parentItem && pdf.parentItem.getField("title")) ||
+                "Untitled",
+            );
+            const toolBlock = buildSidebarToolContextPrompt(paperTitles);
+            if (contextParts.length > 0) {
+              lastUserMsg.parts.unshift(...contextParts);
+            }
+            lastUserMsg.parts.unshift({ text: `${toolBlock}\n\n---\n\n` });
           }
         }
 
@@ -1511,220 +1504,6 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
           if (savedID) {
             addon.setNoteID(itemKey, savedID);
           }
-        } catch (e) {
-          Zotero.debug(`[GeminiChat] Auto-save failed: ${e}`);
-        }
-      }
-    };
-
-    const handleMultiPaperAnalysis = async () => {
-      const userPrompt = input.value.trim();
-      if (!userPrompt) {
-        addon.pushMessage(itemKey, {
-          role: "system",
-          text: "Please enter your question / analysis prompt in the input box first, then click the analysis button.",
-          at: Date.now(),
-        });
-        renderMessages(true);
-        return;
-      }
-
-      const settings = getSettings();
-      if (!settings.apiKey) {
-        addon.pushMessage(itemKey, {
-          role: "system",
-          text: "Missing API key. Set it in Preferences -> Sidebar Chat.",
-          at: Date.now(),
-        });
-        renderMessages(true);
-        return;
-      }
-
-      const contextItems = addon.getContextItems(itemKey);
-      const currentAttachment = item.isAttachment() ? item : getBestAttachment(item);
-
-      const allFiles: Zotero.Item[] = [];
-      if (currentAttachment && currentAttachment.attachmentContentType === "application/pdf") {
-        allFiles.push(currentAttachment);
-      }
-      contextItems.forEach(ci => {
-        if (!allFiles.find(existing => existing.id === ci.id)) {
-          allFiles.push(ci);
-        }
-      });
-
-      if (allFiles.length === 0) {
-        addon.pushMessage(itemKey, {
-          role: "system",
-          text: "No PDF files found. Please open a PDF or add context files first.",
-          at: Date.now(),
-        });
-        renderMessages(true);
-        return;
-      }
-
-      input.value = "";
-      input.style.height = "auto";
-      setBusy(true);
-      _userScrolledUp = false;
-      const startTime = Date.now();
-
-      addon.pushMessage(itemKey, {
-        role: "user",
-        text: userPrompt,
-        at: Date.now(),
-      });
-
-      addon.pushMessage(itemKey, {
-        role: "model",
-        text: "",
-        at: startTime,
-        meta: { duration: 0 },
-      });
-      renderMessages(true);
-
-      const sessions = addon.getSession(itemKey);
-      const modelMsg = sessions[sessions.length - 1];
-
-      const perPaperPrompt = `The user's research question is:
-"""
-${userPrompt}
-"""
-
-Based on this question, please read the following paper and extract key information in two parts:
-
-**Part A - Structured extraction** (always do this, 2-4 sentences per dimension):
-1. **Research Problem**: What problem does this paper address? What are the limitations of existing methods?
-2. **Core Contributions**: What are the main contributions claimed by the authors? (1-3 items)
-3. **Method Overview**: What is the core method/technical approach? Where is the key innovation?
-4. **Experimental Results**: Which datasets/benchmarks were used? Key metrics and comparison results?
-5. **Limitations**: What limitations are acknowledged by the authors or can you identify?
-6. **Reproducibility**: Is the code open-sourced? Is the dataset public? Are experimental details sufficient?
-
-**Part B - Relevance to the user's question** (focus on the user's specific question):
-Based on the user's question above, extract and highlight the parts of this paper that are most relevant. Provide specific details, data, methods, or conclusions from the paper that directly address the user's question.
-
-Output both Part A and Part B. Use the same language as the user's question.`;
-
-      const synthesisPrompt = `The user's research question is:
-"""
-${userPrompt}
-"""
-
-Below are structured extractions from ${allFiles.length} paper(s), each containing both general information and parts specifically relevant to the user's question.
-
-Please provide a comprehensive analysis that directly answers the user's question by synthesizing information across all papers. Structure your response as follows:
-
-## 1. Direct Answer
-Directly address the user's question using evidence from the papers.
-
-## 2. Cross-paper Evidence Summary
-A table comparing how each paper relates to the user's question (paper title, relevant method/finding, key data points).
-
-## 3. Synthesis & Insights
-Deeper analysis that connects findings across papers to provide insights the user couldn't get from reading any single paper alone.
-
-## 4. Gaps & Recommendations
-What aspects of the user's question remain unanswered by these papers? What should they read or investigate next?
-
-Use the same language as the user's question. Be specific and cite which paper each piece of evidence comes from.`;
-
-      try {
-        const extractions: string[] = [];
-
-        for (let i = 0; i < allFiles.length; i++) {
-          const pdfItem = allFiles[i];
-          const title = pdfItem.getField("title") || pdfItem.parentItem?.getField("title") || `Paper ${i + 1}`;
-
-          modelMsg.text = `Analyzing papers for your question...\n\n` +
-            extractions.map((_, idx) => `- ✅ Paper ${idx + 1} done`).join("\n") +
-            (extractions.length > 0 ? "\n" : "") +
-            `- ⏳ (${i + 1}/${allFiles.length}) ${title}`;
-          renderMessages();
-
-          const contextParts: any[] = [];
-          if (settings.provider === "gemini") {
-            const part = await getPdfContextPart(pdfItem);
-            if (part) {
-              contextParts.push({ text: `[Paper: ${title}]` });
-              contextParts.push({ inlineData: part });
-            }
-          } else {
-            const pdfText = await getPdfText(pdfItem);
-            if (pdfText) {
-              contextParts.push({ text: `[Paper: ${title}]\n\n${pdfText}` });
-            }
-          }
-
-          if (contextParts.length === 0) {
-            extractions.push(`# Paper ${i + 1}: ${title}\n\n*Failed to extract PDF content.*`);
-            continue;
-          }
-
-          const extractionContents = [
-            {
-              role: "user" as const,
-              parts: [...contextParts, { text: perPaperPrompt }],
-            },
-          ];
-
-          try {
-            const result = await callAINonStream(settings, extractionContents);
-            extractions.push(`# Paper ${i + 1}: ${title}\n\n${result}`);
-          } catch (e: any) {
-            Zotero.debug(`[GeminiChat] Extraction failed for ${title}: ${e}`);
-            extractions.push(`# Paper ${i + 1}: ${title}\n\n*Extraction failed: ${e?.message || e}*`);
-          }
-        }
-
-        const unifiedDocument = extractions.join("\n\n---\n\n");
-
-        modelMsg.text = `All ${allFiles.length} papers extracted. Synthesizing around your question...`;
-        renderMessages();
-
-        const synthesisContents = [
-          {
-            role: "user" as const,
-            parts: [
-              { text: unifiedDocument + "\n\n---\n\n" + synthesisPrompt },
-            ],
-          },
-        ];
-
-        let accumulatedText = `<details>\n<summary>📋 Per-paper Extractions (click to expand)</summary>\n\n${unifiedDocument}\n\n</details>\n\n---\n\n`;
-        modelMsg.text = accumulatedText;
-        renderMessages();
-
-        for await (const chunk of callAIStream(settings, synthesisContents)) {
-          if (typeof chunk === "string") {
-            accumulatedText += chunk;
-            modelMsg.text = accumulatedText;
-          } else if (typeof chunk === "object" && chunk.usage) {
-            modelMsg.usage = chunk.usage;
-          }
-          renderMessages();
-        }
-
-        const duration = Date.now() - startTime;
-        if (modelMsg.meta) {
-          modelMsg.meta.duration = duration;
-        }
-
-      } catch (e: any) {
-        const s = addon.getSession(itemKey);
-        s.pop();
-        addon.pushMessage(itemKey, {
-          role: "system",
-          text: `Multi-paper analysis error: ${e?.message || e}`,
-          at: Date.now(),
-        });
-      } finally {
-        setBusy(false);
-        renderMessages();
-        try {
-          const currentNoteID = addon.getNoteID(itemKey);
-          const savedID = await saveFullSessionToNote(item, messages, currentNoteID);
-          if (savedID) addon.setNoteID(itemKey, savedID);
         } catch (e) {
           Zotero.debug(`[GeminiChat] Auto-save failed: ${e}`);
         }
@@ -2000,6 +1779,92 @@ export function getBestAttachment(item: Zotero.Item): Zotero.Item | null {
   return null;
 }
 
+/** selectItemsDialog can return IDs or wrapped items; `instanceof Zotero.Item` often fails across compartments. */
+function coercePickerSelectionToItem(idOrItem: any): Zotero.Item | null {
+  try {
+    if (idOrItem == null) return null;
+    if (typeof idOrItem === "number" && Number.isFinite(idOrItem)) {
+      const z = Zotero.Items.get(idOrItem);
+      return z && !z.deleted ? z : null;
+    }
+    if (typeof idOrItem === "string") {
+      const n = parseInt(idOrItem.trim(), 10);
+      if (!Number.isNaN(n)) {
+        const z = Zotero.Items.get(n);
+        return z && !z.deleted ? z : null;
+      }
+      return null;
+    }
+    if (typeof idOrItem === "object") {
+      const rawId = idOrItem.id ?? idOrItem.itemID ?? idOrItem.itemId;
+      if (typeof rawId === "number" && Number.isFinite(rawId)) {
+        const z = Zotero.Items.get(rawId);
+        if (z && !z.deleted) return z;
+      }
+      if (idOrItem.itemTypeID != null && idOrItem.id != null && !idOrItem.deleted) {
+        return idOrItem as Zotero.Item;
+      }
+    }
+  } catch (e) {
+    Zotero.debug(`[GeminiChat] coercePickerSelectionToItem: ${e}`);
+  }
+  return null;
+}
+
+function getSidebarRagLimits(): { totalCap: number; maxPerPaper: number } {
+  const pfx = config.prefsPrefix;
+  const q = parseInt((Zotero.Prefs.get(`${pfx}.ragChunksPerQuery`, true) as string) || "30", 10) || 30;
+  const per = parseInt((Zotero.Prefs.get(`${pfx}.ragMaxChunksPerPaper`, true) as string) || "3", 10) || 3;
+  return {
+    totalCap: Math.max(5, Math.min(60, q)),
+    maxPerPaper: Math.max(1, Math.min(10, per)),
+  };
+}
+
+/** Try parent library item id then attachment id (RAG files may use either). */
+async function loadOrBuildRagForSidebarPdf(pdfAttachment: Zotero.Item): Promise<RagIndex | null> {
+  const tryIds: number[] = [];
+  if (pdfAttachment.parentItemID) tryIds.push(pdfAttachment.parentItemID);
+  tryIds.push(pdfAttachment.id);
+  const seen = new Set<number>();
+  for (const id of tryIds) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    try {
+      if (await hasRagIndex(id)) {
+        const idx = await loadRagIndex(id);
+        if (idx?.chunks?.length) return idx;
+      }
+    } catch (_) { /* ignore */ }
+  }
+  try {
+    return await buildRagIndexForItem(pdfAttachment);
+  } catch (e) {
+    Zotero.debug(`[GeminiChat] buildRagIndexForItem sidebar: ${e}`);
+    return null;
+  }
+}
+
+async function appendFullPdfParts(
+  settings: ReturnType<typeof getSettings>,
+  parts: any[],
+  pdfItem: Zotero.Item,
+  header: string,
+): Promise<void> {
+  if (settings.provider === "gemini") {
+    const blob = await getPdfContextPart(pdfItem);
+    if (blob) {
+      parts.push({ text: header });
+      parts.push({ inlineData: blob });
+    }
+  } else {
+    const pdfText = await getPdfText(pdfItem);
+    if (pdfText) {
+      parts.push({ text: `${header}\n\n${pdfText}` });
+    }
+  }
+}
+
 async function getFileData(path: string): Promise<string | null> {
   if (typeof IOUtils !== "undefined") {
     try {
@@ -2033,16 +1898,21 @@ function arrayBufferToBase64(buffer: Uint8Array | ArrayBuffer | any): string {
   return btoa(binary);
 }
 
-export async function callAINonStream(settings: ReturnType<typeof getSettings>, contents: any[]): Promise<string> {
+export async function callAINonStream(
+  settings: ReturnType<typeof getSettings>,
+  contents: any[],
+  modelOverride?: string,
+): Promise<string> {
   const provider = getProvider(settings.provider);
+  const model = modelOverride || settings.model;
 
   const endpoint = provider.buildEndpoint({
     apiBase: settings.apiBase,
-    model: settings.model,
+    model,
     apiKey: settings.apiKey,
   }, false);
 
-  const payload = provider.formatRequest(contents, settings.model);
+  const payload = provider.formatRequest(contents, model);
 
   if (settings.provider !== "gemini" && payload.stream !== undefined) {
     payload.stream = false;
@@ -2095,6 +1965,179 @@ export async function callAINonStream(settings: ReturnType<typeof getSettings>, 
     if (text) return text;
     throw new Error("Unexpected response format");
   }
+}
+
+/** Same idea as multiPaperChatCore.rewriteQueryForSearch — helps BM25 on non-Latin queries. */
+const HAS_NON_LATIN_QUERY_RE = /[^\u0000-\u024F\u1E00-\u1EFF]/;
+
+async function rewriteSidebarQueryForSearch(userQuery: string): Promise<string> {
+  const q = userQuery.trim();
+  if (!q) return userQuery;
+  if (!HAS_NON_LATIN_QUERY_RE.test(q)) return userQuery;
+
+  const settings = getSettings();
+  const pfx = config.prefsPrefix;
+  const extractionModelPref = (Zotero.Prefs.get(`${pfx}.extractionModel`, true) as string) || "__same__";
+  const extractionModel =
+    !extractionModelPref || extractionModelPref === "__same__" || extractionModelPref === "__custom__"
+      ? settings.model
+      : extractionModelPref;
+
+  try {
+    const prompt =
+      `Extract English academic search keywords from the following query. Return ONLY the keywords separated by spaces, no explanation, no punctuation. If the query is about a concept, include the English term and closely related terms.\n\nQuery: ${q}`;
+    const contents = [{ role: "user" as const, parts: [{ text: prompt }] }];
+    const keywords = await callAINonStream(settings, contents, extractionModel);
+    const cleaned = keywords.trim().replace(/[,;.，；。、\n]/g, " ").replace(/\s+/g, " ");
+    if (cleaned.length > 0 && cleaned.length < 500) {
+      return `${cleaned} ${q}`;
+    }
+  } catch (e) {
+    Zotero.debug(`[GeminiChat] rewriteSidebarQueryForSearch: ${e}`);
+  }
+  return userQuery;
+}
+
+/**
+ * RAG (+ full-PDF fallback) for a given set of PDFs only. Used for sidebar context and for "+ papers" on the first turn.
+ */
+async function buildReaderSidebarRagContextPartsForPdfs(
+  settings: ReturnType<typeof getSettings>,
+  userQuery: string,
+  pdfs: Zotero.Item[],
+): Promise<any[]> {
+  if (pdfs.length === 0) return [];
+
+  const { totalCap, maxPerPaper } = getSidebarRagLimits();
+  const indices: RagIndex[] = [];
+  const seenIndexItemIds = new Set<number>();
+
+  for (const pdf of pdfs) {
+    const idx = await loadOrBuildRagForSidebarPdf(pdf);
+    if (idx?.chunks?.length && !seenIndexItemIds.has(idx.itemId)) {
+      seenIndexItemIds.add(idx.itemId);
+      indices.push(idx);
+    }
+  }
+
+  if (indices.length === 0) {
+    Zotero.debug("[GeminiChat] Sidebar RAG: no indices — full PDF fallback for subset");
+    const parts: any[] = [];
+    for (const pdf of pdfs) {
+      const title =
+        pdf.getField("title") ||
+        (pdf.parentItem && pdf.parentItem.getField("title")) ||
+        "Untitled";
+      await appendFullPdfParts(settings, parts, pdf, `[PDF (no RAG index — full text): ${title}]`);
+    }
+    return parts;
+  }
+
+  const q = userQuery.trim();
+  if (!q) {
+    const parts: any[] = [];
+    for (const pdf of pdfs) {
+      const title =
+        pdf.getField("title") ||
+        (pdf.parentItem && pdf.parentItem.getField("title")) ||
+        "Untitled";
+      await appendFullPdfParts(settings, parts, pdf, `[PDF (empty question — full text): ${title}]`);
+    }
+    return parts;
+  }
+
+  const totalChunks = indices.reduce((s, idx) => s + idx.chunks.length, 0);
+  const searchQuery = await rewriteSidebarQueryForSearch(q);
+  const results = searchChunksBalanced(searchQuery, indices, maxPerPaper, totalCap);
+
+  if (results.length === 0) {
+    Zotero.debug(`[GeminiChat] Sidebar RAG: 0 hits over ${totalChunks} chunks — full PDF fallback (subset)`);
+    const parts: any[] = [
+      {
+        text:
+          `[RAG] No matching passages (indexed ${totalChunks} chunk(s) across ${indices.length} PDF(s)). Sending full text of these PDFs.`,
+      },
+    ];
+    for (const pdf of pdfs) {
+      const title =
+        pdf.getField("title") ||
+        (pdf.parentItem && pdf.parentItem.getField("title")) ||
+        "Untitled";
+      await appendFullPdfParts(settings, parts, pdf, `[Full text: ${title}]`);
+    }
+    return parts;
+  }
+
+  const grouped: Record<string, { section: string; text: string; score: number }[]> = {};
+  for (const r of results) {
+    if (!grouped[r.paperTitle]) grouped[r.paperTitle] = [];
+    grouped[r.paperTitle].push({ section: r.section, text: r.text, score: r.score });
+  }
+
+  const paperCount = Object.keys(grouped).length;
+  let contextText = `[RAG Context — ${results.length} passages balanced across ${paperCount} PDF(s), max ${maxPerPaper}/paper]\n`;
+  contextText +=
+    "Passages from the PDF open in the reader and any PDFs added with +; retrieved like multi-paper analysis (per-paper balanced keyword search on your question).\n\n";
+
+  let passageNum = 0;
+  for (const [title, passages] of Object.entries(grouped)) {
+    contextText += `=== Paper: ${title} (${passages.length} passage(s)) ===\n\n`;
+    for (const p of passages) {
+      passageNum++;
+      const sectionLabel = p.section ? ` | Section: ${p.section}` : "";
+      contextText += `--- Passage ${passageNum}${sectionLabel} ---\n${p.text}\n\n`;
+    }
+  }
+
+  const queryNote = searchQuery !== q ? `\n[Search query expanded for RAG: ${searchQuery.slice(0, 120)}${searchQuery.length > 120 ? "…" : ""}]\n` : "";
+  contextText += queryNote;
+
+  Zotero.debug(
+    `[GeminiChat] Sidebar RAG: ${results.length} passages, ${paperCount} papers, ${indices.length} indices, ${totalChunks} chunks`,
+  );
+
+  return [{ text: contextText }];
+}
+
+/**
+ * Aligns with multiPaperChatCore.buildContextParts: load RAG for every PDF (current tab + +), rewrite query, balanced BM25.
+ * Full PDFs only as fallback when there is no index or no hits.
+ * On the **first** user message in a session, the **primary** PDF (reader tab, first in list) is sent in full; all other PDFs still use RAG.
+ */
+async function buildReaderSidebarRagContextParts(
+  settings: ReturnType<typeof getSettings>,
+  userQuery: string,
+  allPdfAttachments: Zotero.Item[],
+  options?: { isFirstUserQuestion?: boolean },
+): Promise<any[]> {
+  const pdfs = allPdfAttachments.filter((p) => p.attachmentContentType === "application/pdf");
+  if (pdfs.length === 0) return [];
+
+  if (options?.isFirstUserQuestion) {
+    const primaryPdf = pdfs[0];
+    const otherPdfs = pdfs.slice(1);
+    const parts: any[] = [];
+    const primaryTitle =
+      primaryPdf.getField("title") ||
+      (primaryPdf.parentItem && primaryPdf.parentItem.getField("title")) ||
+      "Untitled";
+    await appendFullPdfParts(
+      settings,
+      parts,
+      primaryPdf,
+      `[Current PDF — full text (first question in this chat): ${primaryTitle}]`,
+    );
+    if (otherPdfs.length > 0) {
+      const ragForOthers = await buildReaderSidebarRagContextPartsForPdfs(settings, userQuery, otherPdfs);
+      parts.push(...ragForOthers);
+    }
+    Zotero.debug(
+      `[GeminiChat] Sidebar context: first turn — full primary PDF + RAG for ${otherPdfs.length} other PDF(s)`,
+    );
+    return parts;
+  }
+
+  return buildReaderSidebarRagContextPartsForPdfs(settings, userQuery, pdfs);
 }
 
 export async function* callAIStream(settings: ReturnType<typeof getSettings>, contents: any[]): AsyncGenerator<string | { usage: any }, void, unknown> {

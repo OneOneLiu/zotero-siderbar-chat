@@ -1,4 +1,5 @@
 import { config } from "../package.json";
+import { createEmptyChatContext, type ChatContext } from "./modules/chatContext";
 import { registerPreferencePane } from "./modules/prefsPane";
 import { registerReaderPane, registerSidebarButton } from "./modules/readerPane";
 import { registerContextMenu } from "./modules/contextMenu";
@@ -25,6 +26,7 @@ class Addon {
     noteIDs: Record<string, number>;
     contextItems: Record<string, Zotero.Item[]>;
     busy: Record<string, boolean>;
+    analysisChatContexts: Record<string, ChatContext>;
   };
 
   constructor() {
@@ -35,6 +37,7 @@ class Addon {
       noteIDs: {},
       contextItems: {},
       busy: {},
+      analysisChatContexts: {},
     };
   }
 
@@ -111,6 +114,13 @@ class Addon {
 
   public clearContextItems(key: string) {
     this.data.contextItems[key] = [];
+  }
+
+  public getAnalysisChatContext(key: string): ChatContext {
+    if (!this.data.analysisChatContexts[key]) {
+      this.data.analysisChatContexts[key] = createEmptyChatContext();
+    }
+    return this.data.analysisChatContexts[key];
   }
 }
 
