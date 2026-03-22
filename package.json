@@ -29,6 +29,7 @@
     "katex": "^0.16.38",
     "markdown-it": "^14.1.0",
     "markdown-it-texmath": "^1.0.0",
+    "mermaid": "^11.13.0",
     "zotero-plugin-toolkit": "^5.1.0-beta.8"
   },
   "devDependencies": {
