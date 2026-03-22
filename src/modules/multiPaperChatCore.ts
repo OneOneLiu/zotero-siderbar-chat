@@ -303,6 +303,7 @@ export function getFullAnalysisSettings() {
     "get_item_collections", "get_related_items", "get_item_details",
     "get_collection_tag_stats", "get_collection_stats", "get_recent_items",
     "remove_paper", "add_paper_to_analysis", "rebuild_paper_rag",
+    "add_tag", "remove_tag",
   ];
   let enabledTools: Set<string>;
   try {
@@ -1153,6 +1154,8 @@ function getToolDefs(): ToolDef[] {
     { name: "remove_paper", description: "Remove paper from analysis", parameters: { type: "object", properties: { paper_index: { type: "number" } }, required: ["paper_index"] } },
     { name: "add_paper_to_analysis", description: "Add item to analysis by ID", parameters: { type: "object", properties: { item_id: { type: "number" } }, required: ["item_id"] } },
     { name: "rebuild_paper_rag", description: "Rebuild RAG index", parameters: { type: "object", properties: { paper_index: { type: "number" } }, required: ["paper_index"] } },
+    { name: "add_tag", description: "Add a tag to a paper in the analysis set or any Zotero item by ID", parameters: { type: "object", properties: { tag: { type: "string" }, paper_index: { type: "number" }, item_id: { type: "number" } }, required: ["tag"] } },
+    { name: "remove_tag", description: "Remove a tag from a paper in the analysis set or any Zotero item by ID", parameters: { type: "object", properties: { tag: { type: "string" }, paper_index: { type: "number" }, item_id: { type: "number" } }, required: ["tag"] } },
   ];
 }
 
@@ -1201,6 +1204,8 @@ function buildToolContextPrompt(tools: ToolDef[], settings: ReturnType<typeof ge
   if (enabled.has("remove_paper")) mgmtTools.push("remove_paper(paper_index) — remove paper from analysis (session only)");
   if (enabled.has("add_paper_to_analysis")) mgmtTools.push("add_paper_to_analysis(item_id) — add Zotero item by ID [ID:xxx], auto-builds RAG");
   if (enabled.has("rebuild_paper_rag")) mgmtTools.push("rebuild_paper_rag(paper_index) — force rebuild search index");
+  if (enabled.has("add_tag")) mgmtTools.push("add_tag(tag, paper_index? | item_id?) — add a tag to a paper or any item");
+  if (enabled.has("remove_tag")) mgmtTools.push("remove_tag(tag, paper_index? | item_id?) — remove a tag from a paper or any item");
 
   if (analysisTools.length) ctx += "**Paper tools:**\n" + analysisTools.map(t => `- ${t}`).join("\n") + "\n";
   if (libraryTools.length) ctx += "**Library tools:**\n" + libraryTools.map(t => `- ${t}`).join("\n") + "\n";
@@ -1745,6 +1750,62 @@ async function executeTool(name: string, args: Record<string, any>, settings: Re
       }
     }
 
+    case "add_tag": {
+      const tag = args.tag as string;
+      if (!tag) return `Error: tag is required.`;
+      try {
+        let item: any = null;
+        let label = "";
+        if (idx >= 0 && idx < C.papers.length) {
+          item = Zotero.Items.get(C.papers[idx].id);
+          label = `Paper ${args.paper_index} ("${C.papers[idx].title}")`;
+        } else if (args.item_id) {
+          item = Zotero.Items.get(args.item_id);
+          label = `Item ID:${args.item_id}`;
+        } else {
+          return `Error: Provide paper_index or item_id.`;
+        }
+        if (!item) return `Error: Item not found.`;
+        const parent = item.isAttachment?.() ? item.parentItem : item;
+        if (!parent) return `Error: Cannot resolve parent item.`;
+        const existingTags = (parent.getTags?.() || []).map((t: any) => t.tag || t);
+        if (existingTags.includes(tag)) return `Tag "${tag}" already exists on ${label}.`;
+        parent.addTag(tag);
+        await parent.saveTx();
+        return `Added tag "${tag}" to ${label}. Total tags: ${(parent.getTags?.() || []).length}.`;
+      } catch (e: any) {
+        return `Error adding tag: ${e?.message || e}`;
+      }
+    }
+
+    case "remove_tag": {
+      const tag = args.tag as string;
+      if (!tag) return `Error: tag is required.`;
+      try {
+        let item: any = null;
+        let label = "";
+        if (idx >= 0 && idx < C.papers.length) {
+          item = Zotero.Items.get(C.papers[idx].id);
+          label = `Paper ${args.paper_index} ("${C.papers[idx].title}")`;
+        } else if (args.item_id) {
+          item = Zotero.Items.get(args.item_id);
+          label = `Item ID:${args.item_id}`;
+        } else {
+          return `Error: Provide paper_index or item_id.`;
+        }
+        if (!item) return `Error: Item not found.`;
+        const parent = item.isAttachment?.() ? item.parentItem : item;
+        if (!parent) return `Error: Cannot resolve parent item.`;
+        const existingTags = (parent.getTags?.() || []).map((t: any) => t.tag || t);
+        if (!existingTags.includes(tag)) return `Tag "${tag}" not found on ${label}. Current tags: ${existingTags.join(", ") || "(none)"}.`;
+        parent.removeTag(tag);
+        await parent.saveTx();
+        return `Removed tag "${tag}" from ${label}. Remaining tags: ${(parent.getTags?.() || []).length}.`;
+      } catch (e: any) {
+        return `Error removing tag: ${e?.message || e}`;
+      }
+    }
+
     default: {
       if (name.startsWith("pref_")) {
         const prefId = name.slice(5);
@@ -2003,6 +2064,8 @@ ${MATH_FORMAT_INSTRUCTION}`;
           case "get_collection_tag_stats": desc = `🏷️ Tag stats for collection ${tc.args.collection_name || `#${tc.args.collection_id}` || "(current)"}`; break;
           case "get_collection_stats": desc = `📊 Stats for collection ${tc.args.collection_name || `#${tc.args.collection_id}` || "(current)"}`; break;
           case "get_recent_items": desc = `🕐 Recent items (${tc.args.days || 7} days)`; break;
+          case "add_tag": desc = `🏷️ Adding tag "${tc.args.tag}"${pidx ? ` to Paper ${pidx}` : tc.args.item_id ? ` to item ID:${tc.args.item_id}` : ""}`; break;
+          case "remove_tag": desc = `🏷️ Removing tag "${tc.args.tag}"${pidx ? ` from Paper ${pidx}` : tc.args.item_id ? ` from item ID:${tc.args.item_id}` : ""}`; break;
           default: {
             if (tc.name.startsWith("pref_")) {
               const prefId = tc.name.slice(5);

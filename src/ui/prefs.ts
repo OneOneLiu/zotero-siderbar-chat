@@ -785,6 +785,7 @@ function initForm(Zotero: any) {
     "get_item_collections", "get_related_items", "get_item_details",
     "get_collection_tag_stats", "get_collection_stats", "get_recent_items",
     "remove_paper", "add_paper_to_analysis", "rebuild_paper_rag",
+    "add_tag", "remove_tag",
   ];
 
   let enabledTools: Set<string>;
