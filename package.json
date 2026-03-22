@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@types/markdown-it": "^14.1.2",
+    "highlight.js": "^11.11.1",
     "katex": "^0.16.38",
     "markdown-it": "^14.1.0",
     "markdown-it-texmath": "^1.0.0",
