@@ -563,27 +563,209 @@ function initForm(Zotero: any) {
   synthesisPrompt.value = load("synthesisPrompt", DEFAULT_SYNTHESIS_PROMPT);
   followUpPrompt.value = load("followUpPrompt", DEFAULT_FOLLOW_UP_PROMPT);
 
-  questionUnderstandingPrompt.addEventListener("input", () => save("questionUnderstandingPrompt", questionUnderstandingPrompt.value));
-  extractionPrompt.addEventListener("input", () => save("extractionPrompt", extractionPrompt.value));
-  synthesisPrompt.addEventListener("input", () => save("synthesisPrompt", synthesisPrompt.value));
-  followUpPrompt.addEventListener("input", () => save("followUpPrompt", followUpPrompt.value));
+  // ---- Prompt Editor: Variable Registry ----
+  interface PromptVarDef {
+    name: string;
+    label: string;
+    sampleValue: string;
+  }
+  interface PromptEditorConfig {
+    textarea: HTMLTextAreaElement;
+    prefKey: string;
+    defaultPrompt: string;
+    vars: PromptVarDef[];
+    tagsContainerId: string;
+    validationId: string;
+    previewId: string;
+    previewDetailsId: string;
+    resetBtnId: string;
+  }
 
-  $("reset-question-understanding-prompt").addEventListener("click", () => {
-    questionUnderstandingPrompt.value = DEFAULT_QUESTION_UNDERSTANDING_PROMPT;
-    save("questionUnderstandingPrompt", DEFAULT_QUESTION_UNDERSTANDING_PROMPT);
-  });
-  $("reset-extraction-prompt").addEventListener("click", () => {
-    extractionPrompt.value = DEFAULT_EXTRACTION_PROMPT;
-    save("extractionPrompt", DEFAULT_EXTRACTION_PROMPT);
-  });
-  $("reset-synthesis-prompt").addEventListener("click", () => {
-    synthesisPrompt.value = DEFAULT_SYNTHESIS_PROMPT;
-    save("synthesisPrompt", DEFAULT_SYNTHESIS_PROMPT);
-  });
-  $("reset-follow-up-prompt").addEventListener("click", () => {
-    followUpPrompt.value = DEFAULT_FOLLOW_UP_PROMPT;
-    save("followUpPrompt", DEFAULT_FOLLOW_UP_PROMPT);
-  });
+  const PROMPT_EDITORS: PromptEditorConfig[] = [
+    {
+      textarea: questionUnderstandingPrompt,
+      prefKey: "questionUnderstandingPrompt",
+      defaultPrompt: DEFAULT_QUESTION_UNDERSTANDING_PROMPT,
+      vars: [
+        { name: "question", label: "{question}", sampleValue: "[用户提出的研究问题]" },
+        { name: "paper_list", label: "{paper_list}", sampleValue: "[论文1元信息]\n[论文2元信息]\n..." },
+        { name: "count", label: "{count}", sampleValue: "3" },
+      ],
+      tagsContainerId: "var-tags-qu",
+      validationId: "validation-qu",
+      previewId: "preview-qu",
+      previewDetailsId: "preview-details-qu",
+      resetBtnId: "reset-question-understanding-prompt",
+    },
+    {
+      textarea: extractionPrompt,
+      prefKey: "extractionPrompt",
+      defaultPrompt: DEFAULT_EXTRACTION_PROMPT,
+      vars: [
+        { name: "question", label: "{question}", sampleValue: "[用户提出的研究问题]" },
+        { name: "understanding", label: "{understanding}", sampleValue: "[Phase ② 问题理解的输出结果：核心概念定义、子问题 Q1/Q2/Q3...]" },
+      ],
+      tagsContainerId: "var-tags-ext",
+      validationId: "validation-ext",
+      previewId: "preview-ext",
+      previewDetailsId: "preview-details-ext",
+      resetBtnId: "reset-extraction-prompt",
+    },
+    {
+      textarea: synthesisPrompt,
+      prefKey: "synthesisPrompt",
+      defaultPrompt: DEFAULT_SYNTHESIS_PROMPT,
+      vars: [
+        { name: "question", label: "{question}", sampleValue: "[用户提出的研究问题]" },
+        { name: "understanding", label: "{understanding}", sampleValue: "[Phase ② 问题理解的输出结果]" },
+        { name: "extractions", label: "{extractions}", sampleValue: "[Paper 1 提取结果]\n---\n[Paper 2 提取结果]\n---\n..." },
+        { name: "count", label: "{count}", sampleValue: "3" },
+      ],
+      tagsContainerId: "var-tags-synth",
+      validationId: "validation-synth",
+      previewId: "preview-synth",
+      previewDetailsId: "preview-details-synth",
+      resetBtnId: "reset-synthesis-prompt",
+    },
+    {
+      textarea: followUpPrompt,
+      prefKey: "followUpPrompt",
+      defaultPrompt: DEFAULT_FOLLOW_UP_PROMPT,
+      vars: [
+        { name: "question", label: "{question}", sampleValue: "[用户的追问内容]" },
+      ],
+      tagsContainerId: "var-tags-followup",
+      validationId: "validation-followup",
+      previewId: "preview-followup",
+      previewDetailsId: "preview-details-followup",
+      resetBtnId: "reset-follow-up-prompt",
+    },
+  ];
+
+  const escPreview = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  function insertAtCursor(textarea: HTMLTextAreaElement, text: string) {
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const before = textarea.value.substring(0, start);
+    const after = textarea.value.substring(end);
+    textarea.value = before + text + after;
+    textarea.selectionStart = textarea.selectionEnd = start + text.length;
+    textarea.focus();
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function validatePrompt(cfg: PromptEditorConfig) {
+    const container = document.getElementById(cfg.validationId);
+    if (!container) return;
+    container.innerHTML = "";
+
+    const text = cfg.textarea.value;
+    const validNames = new Set(cfg.vars.map(v => v.name));
+    const allMatches = text.matchAll(/\{(\w+)\}/g);
+    const unknownVars: string[] = [];
+    const foundVars = new Set<string>();
+
+    for (const m of allMatches) {
+      const varName = m[1];
+      if (validNames.has(varName)) {
+        foundVars.add(varName);
+      } else {
+        if (!unknownVars.includes(varName)) unknownVars.push(varName);
+      }
+    }
+
+    if (unknownVars.length > 0) {
+      const validList = cfg.vars.map(v => `{${v.name}}`).join(", ");
+      const div = document.createElement("div");
+      div.className = "validation-warning error";
+      div.innerHTML = `<span class="validation-icon">⚠️</span><span>Unknown variable(s): <strong>${unknownVars.map(v => `{${escPreview(v)}}`).join(", ")}</strong> — these will not be replaced at runtime. Valid variables for this prompt: ${validList}</span>`;
+      container.appendChild(div);
+    }
+
+    const missingVars = cfg.vars.filter(v => !foundVars.has(v.name));
+    if (missingVars.length > 0 && text.trim().length > 0) {
+      const div = document.createElement("div");
+      div.className = "validation-warning info";
+      div.innerHTML = `<span class="validation-icon">ℹ️</span><span>Unused variable(s): ${missingVars.map(v => `<strong>{${escPreview(v.name)}}</strong>`).join(", ")} — click the tags above to insert</span>`;
+      container.appendChild(div);
+    }
+  }
+
+  function updatePreview(cfg: PromptEditorConfig) {
+    const previewEl = document.getElementById(cfg.previewId);
+    const detailsEl = document.getElementById(cfg.previewDetailsId) as HTMLDetailsElement | null;
+    if (!previewEl || !detailsEl) return;
+
+    // Only render if details is open
+    if (!detailsEl.open) return;
+
+    let text = escPreview(cfg.textarea.value);
+    for (const v of cfg.vars) {
+      const re = new RegExp(`\\{${v.name}\\}`, "g");
+      text = text.replace(re, `<span class="preview-var" title="${escPreview(v.name)}: ${escPreview(v.sampleValue)}">${escPreview(v.sampleValue)}</span>`);
+    }
+    // Highlight unknown vars with red
+    text = text.replace(/\{(\w+)\}/g, (match, name) => {
+      return `<span style="background:#ffe0e0;border:1px solid #ff6b6b;border-radius:3px;padding:1px 5px;font-size:11px;color:#d32f2f;font-weight:500;" title="Unknown variable: ${escPreview(name)}">${escPreview(match)}</span>`;
+    });
+    previewEl.innerHTML = text;
+  }
+
+  function renderVarTags(cfg: PromptEditorConfig) {
+    const container = document.getElementById(cfg.tagsContainerId);
+    if (!container) return;
+
+    for (const v of cfg.vars) {
+      const tag = document.createElement("span");
+      tag.className = "var-tag";
+      tag.innerHTML = `<span class="var-tag-icon">+</span>${escPreview(v.label)}`;
+      tag.title = `Click to insert ${v.label}\n→ ${v.sampleValue}`;
+      tag.addEventListener("click", () => {
+        insertAtCursor(cfg.textarea, v.label);
+        // Flash green feedback
+        tag.classList.add("var-tag-inserted");
+        setTimeout(() => tag.classList.remove("var-tag-inserted"), 600);
+      });
+      container.appendChild(tag);
+    }
+  }
+
+  function setupPromptEditor(cfg: PromptEditorConfig) {
+    // Render variable tags
+    renderVarTags(cfg);
+
+    // Save on input
+    cfg.textarea.addEventListener("input", () => {
+      save(cfg.prefKey, cfg.textarea.value);
+      validatePrompt(cfg);
+      updatePreview(cfg);
+    });
+
+    // Preview: update when details is toggled open
+    const detailsEl = document.getElementById(cfg.previewDetailsId) as HTMLDetailsElement | null;
+    if (detailsEl) {
+      detailsEl.addEventListener("toggle", () => {
+        if (detailsEl.open) updatePreview(cfg);
+      });
+    }
+
+    // Reset button: also trigger validation & preview update
+    $(cfg.resetBtnId).addEventListener("click", () => {
+      cfg.textarea.value = cfg.defaultPrompt;
+      save(cfg.prefKey, cfg.defaultPrompt);
+      validatePrompt(cfg);
+      updatePreview(cfg);
+    });
+
+    // Initial validation
+    validatePrompt(cfg);
+  }
+
+  // Initialize all 4 prompt editors
+  for (const cfg of PROMPT_EDITORS) {
+    setupPromptEditor(cfg);
+  }
 
   // ---- Max Tool Call Rounds ----
   const maxToolRoundsInput = $input("maxToolRounds") as HTMLInputElement;

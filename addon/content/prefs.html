@@ -298,6 +298,130 @@
       gap: 8px;
       margin-bottom: 12px;
     }
+
+    /* ---- Prompt variable tags ---- */
+    .var-tags {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .var-tags-label {
+      font-size: 11px;
+      color: #888;
+      align-self: center;
+      margin-right: 2px;
+    }
+    .var-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-family: "Consolas", "Monaco", "Courier New", monospace;
+      cursor: pointer;
+      border: 1px solid #d0d7de;
+      background: #f6f8fa;
+      color: #0969da;
+      transition: all 0.15s;
+      user-select: none;
+    }
+    .var-tag:hover {
+      background: #ddf4ff;
+      border-color: #54aeff;
+      transform: translateY(-1px);
+    }
+    .var-tag:active {
+      transform: translateY(0);
+      background: #b6e3ff;
+    }
+    .var-tag-inserted {
+      background: #dafbe1 !important;
+      border-color: #34d058 !important;
+      color: #1a7f37 !important;
+    }
+    .var-tag .var-tag-icon {
+      font-size: 10px;
+      opacity: 0.6;
+    }
+
+    /* ---- Prompt validation ---- */
+    .prompt-validation {
+      margin-top: 4px;
+      min-height: 0;
+    }
+    .prompt-validation:empty {
+      display: none;
+    }
+    .validation-warning {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      line-height: 1.5;
+      margin-bottom: 4px;
+    }
+    .validation-warning.error {
+      background: #fff8e1;
+      border: 1px solid #ffe082;
+      color: #8d6e00;
+    }
+    .validation-warning.info {
+      background: #e3f2fd;
+      border: 1px solid #90caf9;
+      color: #1565c0;
+    }
+    .validation-warning .validation-icon {
+      flex-shrink: 0;
+      font-size: 13px;
+    }
+
+    /* ---- Prompt preview ---- */
+    .prompt-preview {
+      margin-top: 8px;
+      border: 1px solid #d4d4d4;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .prompt-preview summary {
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #555;
+      cursor: pointer;
+      background: #f6f8fa;
+      user-select: none;
+      border-bottom: 1px solid transparent;
+    }
+    .prompt-preview[open] summary {
+      border-bottom-color: #d4d4d4;
+    }
+    .prompt-preview summary:hover {
+      color: #007AFF;
+    }
+    .preview-content {
+      padding: 12px;
+      font-size: 12px;
+      line-height: 1.6;
+      background: #fdfdfd;
+      max-height: 400px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    }
+    .preview-content .preview-var {
+      background: #ddf4ff;
+      border: 1px solid #54aeff;
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 11px;
+      color: #0969da;
+      font-weight: 500;
+    }
   </style>
 </head>
 
@@ -445,11 +569,19 @@
         <button class="reset-link" id="reset-question-understanding-prompt">Reset to default</button>
       </div>
       <div class="hint" style="margin-top:-8px;margin-bottom:8px;">
-        The AI first analyzes the research question along with paper metadata to identify core concepts, clarify ambiguities, and generate numbered sub-questions (Q1, Q2...). This understanding document guides all subsequent steps. Use <code>{question}</code> for the research question, <code>{paper_list}</code> for paper metadata, and <code>{count}</code> for the number of papers.
+        The AI first analyzes the research question along with paper metadata to identify core concepts, clarify ambiguities, and generate numbered sub-questions (Q1, Q2...). This understanding document guides all subsequent steps.
+      </div>
+      <div class="var-tags" id="var-tags-qu">
+        <span class="var-tags-label">Variables:</span>
       </div>
       <div class="field">
-        <textarea id="question-understanding-prompt" rows="10"></textarea>
+        <textarea id="question-understanding-prompt" rows="16" style="min-height:200px;"></textarea>
       </div>
+      <div class="prompt-validation" id="validation-qu"></div>
+      <details class="prompt-preview" id="preview-details-qu">
+        <summary>👁 Preview (click to expand)</summary>
+        <div class="preview-content" id="preview-qu"></div>
+      </details>
     </div>
 
     <div class="section">
@@ -458,11 +590,19 @@
         <button class="reset-link" id="reset-extraction-prompt">Reset to default</button>
       </div>
       <div class="hint" style="margin-top:-8px;margin-bottom:8px;">
-        This prompt is sent to the AI for each paper to extract structured information and answer each sub-question (Q1, Q2...) from phase ②. Use <code>{question}</code> for the user's question and <code>{understanding}</code> for the question analysis output.
+        This prompt is sent to the AI for each paper to extract structured information and answer each sub-question (Q1, Q2...) from phase ②.
+      </div>
+      <div class="var-tags" id="var-tags-ext">
+        <span class="var-tags-label">Variables:</span>
       </div>
       <div class="field">
-        <textarea id="extraction-prompt" rows="10"></textarea>
+        <textarea id="extraction-prompt" rows="16" style="min-height:200px;"></textarea>
       </div>
+      <div class="prompt-validation" id="validation-ext"></div>
+      <details class="prompt-preview" id="preview-details-ext">
+        <summary>👁 Preview (click to expand)</summary>
+        <div class="preview-content" id="preview-ext"></div>
+      </details>
     </div>
 
     <div class="section">
@@ -471,11 +611,19 @@
         <button class="reset-link" id="reset-synthesis-prompt">Reset to default</button>
       </div>
       <div class="hint" style="margin-top:-8px;margin-bottom:8px;">
-        After all papers are extracted, this prompt drives the cross-paper synthesis. Use <code>{question}</code> for the user's question, <code>{understanding}</code> for the question analysis, <code>{extractions}</code> for all per-paper extraction results, and <code>{count}</code> for the number of papers.
+        After all papers are extracted, this prompt drives the cross-paper synthesis.
+      </div>
+      <div class="var-tags" id="var-tags-synth">
+        <span class="var-tags-label">Variables:</span>
       </div>
       <div class="field">
-        <textarea id="synthesis-prompt" rows="10"></textarea>
+        <textarea id="synthesis-prompt" rows="16" style="min-height:200px;"></textarea>
       </div>
+      <div class="prompt-validation" id="validation-synth"></div>
+      <details class="prompt-preview" id="preview-details-synth">
+        <summary>👁 Preview (click to expand)</summary>
+        <div class="preview-content" id="preview-synth"></div>
+      </details>
     </div>
 
     <div class="section">
@@ -484,11 +632,19 @@
         <button class="reset-link" id="reset-follow-up-prompt">Reset to default</button>
       </div>
       <div class="hint" style="margin-top:-8px;margin-bottom:8px;">
-        After the initial analysis, this prompt wraps every follow-up question to maintain rigor and consistency. The AI receives this prompt along with the question understanding, previous analysis, RAG passages, and chat history. Use <code>{question}</code> for the user's follow-up question.
+        After the initial analysis, this prompt wraps every follow-up question to maintain rigor and consistency. The AI receives this prompt along with the question understanding, previous analysis, RAG passages, and chat history.
+      </div>
+      <div class="var-tags" id="var-tags-followup">
+        <span class="var-tags-label">Variables:</span>
       </div>
       <div class="field">
-        <textarea id="follow-up-prompt" rows="10"></textarea>
+        <textarea id="follow-up-prompt" rows="16" style="min-height:200px;"></textarea>
       </div>
+      <div class="prompt-validation" id="validation-followup"></div>
+      <details class="prompt-preview" id="preview-details-followup">
+        <summary>👁 Preview (click to expand)</summary>
+        <div class="preview-content" id="preview-followup"></div>
+      </details>
     </div>
 
   </div>
