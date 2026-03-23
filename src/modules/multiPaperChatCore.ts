@@ -2138,6 +2138,7 @@ ${MATH_FORMAT_INSTRUCTION}`;
 // ---------- Send handler ----------
 
 let busy = false;
+let rerunRequested = false;
 
 /** Shared send pipeline (iframe + reader sidebar). */
 export async function processAnalysisUserMessage(userText: string): Promise<void> {
@@ -2156,7 +2157,23 @@ export async function processAnalysisUserMessage(userText: string): Promise<void
 
   addMessageBubble("user", esc(userText));
 
-  if (C.chatHistory.length === 0 && !C.standaloneMode && C.papers.length > 0) {
+  // Check rerun flag (set by toggle in the UI)
+  if (rerunRequested) {
+    rerunRequested = false;
+    // Auto-uncheck the toggle visually
+    const rerunToggle = getRootDocument()?.getElementById("rerun-analysis-toggle") as HTMLInputElement | null;
+    if (rerunToggle) rerunToggle.checked = false;
+    const hint = getRootDocument()?.getElementById("rerun-hint-banner");
+    if (hint) hint.classList.remove("visible");
+
+    if (C.papers.length > 0) {
+      addMessageBubble("system", "🔄 Re-running full 4-step analysis pipeline with current papers...");
+      await runInitialAnalysis(userText, settings);
+    } else {
+      addMessageBubble("system", "⚠️ No papers loaded. Cannot run full analysis pipeline.");
+      await handleFollowUp(userText, settings);
+    }
+  } else if (C.chatHistory.length === 0 && !C.standaloneMode && C.papers.length > 0) {
     await runInitialAnalysis(userText, settings);
   } else {
     await handleFollowUp(userText, settings);
@@ -2451,6 +2468,20 @@ async function init() {
     await saveAnalysisNote();
     addMessageBubble("system", `💾 Session saved${C.savedNoteId ? ` (Note ID: ${C.savedNoteId})` : ""}.`);
   });
+
+  // Rerun analysis toggle hint
+  const rerunToggle = rootDoc?.getElementById("rerun-analysis-toggle") as HTMLInputElement | null;
+  const rerunHint = rootDoc?.getElementById("rerun-hint-banner");
+  if (rerunToggle && rerunHint) {
+    rerunToggle.addEventListener("change", () => {
+      rerunRequested = rerunToggle.checked;
+      if (rerunToggle.checked) {
+        rerunHint.classList.add("visible");
+      } else {
+        rerunHint.classList.remove("visible");
+      }
+    });
+  }
 
   let loadedFromNote = false;
   try {

@@ -198,6 +198,78 @@
       text-align: center;
       margin-top: 6px;
     }
+
+    /* --- Rerun analysis toggle --- */
+    .rerun-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      padding: 0 4px;
+    }
+    .rerun-toggle {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+    .rerun-toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .rerun-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #ccc;
+      border-radius: 20px;
+      transition: background 0.25s;
+    }
+    .rerun-slider::before {
+      content: "";
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      left: 2px;
+      bottom: 2px;
+      background: white;
+      border-radius: 50%;
+      transition: transform 0.25s;
+    }
+    .rerun-toggle input:checked + .rerun-slider {
+      background: #007AFF;
+    }
+    .rerun-toggle input:checked + .rerun-slider::before {
+      transform: translateX(16px);
+    }
+    .rerun-label {
+      font-size: 12px;
+      color: #555;
+      cursor: pointer;
+      user-select: none;
+    }
+    .rerun-hint-banner {
+      overflow: hidden;
+      max-height: 0;
+      opacity: 0;
+      transition: max-height 0.3s ease, opacity 0.25s ease, margin 0.3s ease;
+      margin-top: 0;
+    }
+    .rerun-hint-banner.visible {
+      max-height: 60px;
+      opacity: 1;
+      margin-top: 6px;
+    }
+    .rerun-hint-inner {
+      font-size: 11px;
+      color: #e65100;
+      background: #fff3e0;
+      border: 1px solid #ffe0b2;
+      border-radius: 8px;
+      padding: 6px 10px;
+      line-height: 1.5;
+    }
   </style>
 </head>
 <body>
@@ -216,6 +288,16 @@
       <div class="input-row">
         <textarea id="chat-input" class="chat-input" rows="1" placeholder="Ask a question about the selected papers..."></textarea>
         <button id="btn-send" class="btn-send">Send</button>
+      </div>
+      <div class="rerun-row">
+        <label class="rerun-toggle" title="When enabled, your next message will trigger a full 4-step analysis pipeline">
+          <input type="checkbox" id="rerun-analysis-toggle" />
+          <span class="rerun-slider"></span>
+        </label>
+        <label class="rerun-label" for="rerun-analysis-toggle">Re-run full analysis on next message</label>
+      </div>
+      <div class="rerun-hint-banner" id="rerun-hint-banner">
+        <div class="rerun-hint-inner">🔄 Next message will trigger the full 4-step pipeline: Question Understanding → Per-paper Extraction → Synthesis. Previous chat context will be preserved.</div>
       </div>
       <div class="input-hint">Enter to send · Shift+Enter for new line · First message triggers full analysis</div>
     </div>
