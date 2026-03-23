@@ -701,13 +701,6 @@ export async function saveAnalysisNote() {
     if (!note) {
       note = new Zotero.Item("note");
       note.libraryID = Zotero.Libraries.userLibraryID;
-      if (C.papers.length > 0) {
-        const firstItem = Zotero.Items.get(C.papers[0]?.id);
-        if (firstItem) {
-          const parentId = firstItem.isAttachment?.() ? firstItem.parentID : firstItem.id;
-          if (parentId) note.parentID = parentId;
-        }
-      }
     }
 
     const paperInfoHtml = renderMd(buildPaperInfoSection());
@@ -893,7 +886,7 @@ const MATH_FORMAT_INSTRUCTION = "Formatting rule: When writing mathematical form
 
 // ---------- First-message: full analysis pipeline ----------
 
-export async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeof getFullAnalysisSettings>) {
+export async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeof getFullAnalysisSettings>, isRerun = false) {
   const allPdfs: { pdfItem: any; title: string }[] = [];
   for (const p of C.papers) {
     const z = Zotero.Items.get(p.id);
@@ -943,7 +936,17 @@ export async function runInitialAnalysis(userPrompt: string, settings: ReturnTyp
     .replace(/\{paper_list\}/g, paperMetaList)
     .replace(/\{count\}/g, String(allPdfs.length));
   try {
-    C.questionUnderstandingDoc = await callAI(settings, [{ role: "user" as const, parts: [{ text: quPrompt + "\n\n" + MATH_FORMAT_INSTRUCTION }] }]);
+    // On rerun, include previous chat history as context
+    const quContents: { role: "user" | "model"; parts: { text: string }[] }[] = [];
+    if (isRerun && C.chatHistory.length > 0) {
+      for (const msg of C.chatHistory) {
+        if (msg.role === "user" || msg.role === "model") {
+          quContents.push({ role: msg.role, parts: [{ text: msg.text }] });
+        }
+      }
+    }
+    quContents.push({ role: "user" as const, parts: [{ text: quPrompt + "\n\n" + MATH_FORMAT_INSTRUCTION }] });
+    C.questionUnderstandingDoc = await callAI(settings, quContents);
     setChatInnerHTML(quBubble, `✅ Phase 2/4 — Question analysis complete.`);
   } catch (e: any) {
     C.questionUnderstandingDoc = "";
@@ -1065,7 +1068,15 @@ export async function runInitialAnalysis(userPrompt: string, settings: ReturnTyp
     .replace(/\{extractions\}/g, C.analysisDoc || "(No extraction results available.)")
     .replace(/\{count\}/g, String(allPdfs.length));
 
-  const synthContents = [{ role: "user" as const, parts: [{ text: synthPrompt + "\n\n" + MATH_FORMAT_INSTRUCTION }] }];
+  const synthContents: { role: "user" | "model"; parts: { text: string }[] }[] = [];
+  if (isRerun && C.chatHistory.length > 0) {
+    for (const msg of C.chatHistory) {
+      if (msg.role === "user" || msg.role === "model") {
+        synthContents.push({ role: msg.role, parts: [{ text: msg.text }] });
+      }
+    }
+  }
+  synthContents.push({ role: "user" as const, parts: [{ text: synthPrompt + "\n\n" + MATH_FORMAT_INSTRUCTION }] });
 
   let fullMd = `<details><summary>📋 Per-paper Extractions (click to expand)</summary>\n\n${C.analysisDoc}\n\n</details>\n\n---\n\n`;
   setChatInnerHTML(progressBubble, `<strong>🔬 Phase 4/4 — Synthesizing cross-paper analysis...</strong>`);
@@ -2168,7 +2179,7 @@ export async function processAnalysisUserMessage(userText: string): Promise<void
 
     if (C.papers.length > 0) {
       addMessageBubble("system", "🔄 Re-running full 4-step analysis pipeline with current papers...");
-      await runInitialAnalysis(userText, settings);
+      await runInitialAnalysis(userText, settings, true);
     } else {
       addMessageBubble("system", "⚠️ No papers loaded. Cannot run full analysis pipeline.");
       await handleFollowUp(userText, settings);
@@ -2260,6 +2271,14 @@ function getPapers(): PaperInfo[] {
         C.standaloneCollectionInfo = parsed.collection || {};
         return [];
       }
+      // New format: { papers: [...], collection: {...} }
+      if (parsed && parsed.papers && Array.isArray(parsed.papers)) {
+        if (parsed.collection) {
+          C.standaloneCollectionInfo = parsed.collection;
+        }
+        return parsed.papers;
+      }
+      // Legacy format: plain array of papers
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     }
   } catch (_e) { /* ignore */ }
@@ -2433,8 +2452,23 @@ function renderPaperList() {
       const item = listDoc.createElement("div");
       item.className = "paper-check-item";
       item.setAttribute("data-paper-id", String(p.id));
-      item.title = p.title;
+      item.title = `${p.title}\n(Double-click to locate in Zotero)`;
+      item.style.cursor = "pointer";
       setChatInnerHTML(item, `<span class="paper-check-label">${i + 1}. ${esc(p.title)}</span><span class="rag-status-dot" data-rag-id="${p.id}"></span>`);
+      item.addEventListener("dblclick", () => {
+        try {
+          const win = (getGlobalRoot() as any);
+          const mainWin = win?.opener || win;
+          const zp = mainWin?.ZoteroPane || mainWin?.Zotero?.getActiveZoteroPane?.();
+          if (zp) {
+            const zItem = Zotero.Items.get(p.id);
+            if (zItem) {
+              zp.selectItem(zItem.id);
+              mainWin.focus?.();
+            }
+          }
+        } catch (_) { /* ignore */ }
+      });
       list.appendChild(item);
     });
   }

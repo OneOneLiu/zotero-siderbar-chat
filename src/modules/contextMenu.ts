@@ -72,7 +72,16 @@ export function registerContextMenu(win: Window, addon: Addon) {
         return;
       }
 
-      const dataStr = encodeURIComponent(JSON.stringify(papers));
+      // Get the current collection for note saving
+      let collectionInfo: { id?: number; name?: string } = {};
+      try {
+        const coll = zoteroPane.getSelectedCollection?.();
+        if (coll) {
+          collectionInfo = { id: coll.id, name: coll.name };
+        }
+      } catch (_) { /* ignore */ }
+
+      const dataStr = encodeURIComponent(JSON.stringify({ papers, collection: collectionInfo }));
 
       win.openDialog(
         `chrome://${config.addonRef}/content/analysisDialog.xhtml`,
