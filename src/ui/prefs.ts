@@ -769,9 +769,9 @@ function initForm(Zotero: any) {
 
   // ---- Max Tool Call Rounds ----
   const maxToolRoundsInput = $input("maxToolRounds") as HTMLInputElement;
-  maxToolRoundsInput.value = load("maxToolRounds", "15");
+  maxToolRoundsInput.value = load("maxToolRounds", "100");
   maxToolRoundsInput.addEventListener("change", () => {
-    const v = Math.max(1, Math.min(100, parseInt(maxToolRoundsInput.value, 10) || 15));
+    const v = Math.max(1, Math.min(200, parseInt(maxToolRoundsInput.value, 10) || 100));
     maxToolRoundsInput.value = String(v);
     save("maxToolRounds", String(v));
   });

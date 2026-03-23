@@ -333,7 +333,7 @@ export function getFullAnalysisSettings() {
     ragChunksPerQuery: Math.max(5, Math.min(60, parseInt(ragChunksStr, 10) || 30)),
     ragMaxChunksPerPaper: Math.max(1, Math.min(10, parseInt(ragPerPaperStr, 10) || 3)),
     enabledTools,
-    maxToolRounds: Math.max(1, Math.min(100, parseInt((Z.Prefs.get(`${pfx}.maxToolRounds`, true) as string) || "15", 10) || 15)),
+    maxToolRounds: Math.max(1, Math.min(200, parseInt((Z.Prefs.get(`${pfx}.maxToolRounds`, true) as string) || "100", 10) || 100)),
     userPreferences: (() => {
       try {
         const raw = Z.Prefs.get(`${pfx}.userPreferences`, true) as string;
@@ -2032,7 +2032,21 @@ ${MATH_FORMAT_INSTRUCTION}`;
 
   const toolBubble = addMessageBubble("system", "");
   let toolCount = 0;
-  let toolHtml = "";
+  const toolHistory: string[] = [];
+  let currentToolHtml = "";
+
+  function renderToolBubble() {
+    let html = "";
+    if (toolHistory.length > 0) {
+      html += `<details style="margin-bottom:6px;"><summary style="cursor:pointer;font-size:11px;color:#888;user-select:none;">📋 Tool call history (${toolHistory.length} completed)</summary>`;
+      html += `<div style="margin-top:4px;padding:4px 0;border-top:1px solid #e0e0e0;font-size:11px;line-height:1.6;">`;
+      html += toolHistory.join("");
+      html += `</div></details>`;
+    }
+    html += currentToolHtml;
+    setChatInnerHTML(toolBubble, html);
+    scrollToBottom();
+  }
 
   let finalText: string;
   let hitLimit = false;
@@ -2076,24 +2090,24 @@ ${MATH_FORMAT_INSTRUCTION}`;
             }
           }
         }
-        toolHtml = `<strong>🔧 Tool #${toolCount}</strong>: ${esc(desc)}`;
-        setChatInnerHTML(toolBubble, toolHtml);
-        scrollToBottom();
+        currentToolHtml = `<strong>🔧 Tool #${toolCount}</strong>: ${esc(desc)}`;
+        renderToolBubble();
       },
       (_tc, result) => {
         const len = result.length;
         const size = len > 1024 ? `${(len / 1024).toFixed(1)}KB` : `${len} chars`;
-        toolHtml += `<br /><span style="color:#34a853;">✅ Done (${size})</span>`;
-        setChatInnerHTML(toolBubble, toolHtml);
-        scrollToBottom();
+        const completedHtml = currentToolHtml + ` <span style="color:#34a853;">✅ (${size})</span>`;
+        toolHistory.push(`<div style="padding:2px 0;">${completedHtml}</div>`);
+        currentToolHtml = "";
+        renderToolBubble();
       },
     );
     finalText = result.text;
     hitLimit = result.hitLimit;
   } catch (e: any) {
     if (toolCount > 0) {
-      toolHtml += `<br /><span style="color:#ea4335;">❌ Error: ${esc(e?.message || String(e))}</span>`;
-      setChatInnerHTML(toolBubble, toolHtml);
+      currentToolHtml = `<span style="color:#ea4335;">❌ Error: ${esc(e?.message || String(e))}</span>`;
+      renderToolBubble();
     } else {
       toolBubble.remove();
     }
@@ -2101,11 +2115,12 @@ ${MATH_FORMAT_INSTRUCTION}`;
   }
 
   if (toolCount > 0) {
-    let toolSummary = `🔧 Used ${toolCount} tool call(s) to gather additional context.`;
+    let summaryText = `🔧 Used ${toolCount} tool call(s) to gather additional context.`;
     if (hitLimit) {
-      toolSummary += `<br /><span style="color:#f9ab00;">⚠️ Tool call limit reached (${settings.maxToolRounds} rounds). AI may not have finished gathering all information. You can increase the limit in Settings → AI Tools → Max Tool Call Rounds.</span>`;
+      summaryText += `<br /><span style="color:#f9ab00;">⚠️ Tool call limit reached (${settings.maxToolRounds} rounds). AI may not have finished gathering all information. You can increase the limit in Settings → AI Tools → Max Tool Call Rounds.</span>`;
     }
-    setChatInnerHTML(toolBubble, toolSummary);
+    currentToolHtml = summaryText;
+    renderToolBubble();
   } else {
     toolBubble.remove();
   }
