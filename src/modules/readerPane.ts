@@ -1388,7 +1388,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
       if (!settings.apiKey) {
         addon.pushMessage(itemKey, {
           role: "system",
-          text: `Missing API key. Set it in Preferences -> Sidebar Chat.`,
+          text: `Missing API key. Set it in Preferences -> Zotero Research Copilot.`,
           at: Date.now(),
         });
         renderMessages(true);

@@ -4,7 +4,7 @@ export function registerPreferencePane() {
   Zotero.PreferencePanes.register({
     pluginID: config.addonID,
     src: "chrome://GeminiChat/content/preferences.xhtml",
-    label: "Zotero Sidebar Chat",
+    label: "Zotero Research Copilot",
     image: "chrome://GeminiChat/content/icons/favicon.png",
   });
 }

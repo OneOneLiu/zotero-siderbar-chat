@@ -1,7 +1,7 @@
 {
-  "name": "zotero-gemini-chat",
+  "name": "zotero-sidebar-chat",
   "type": "module",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "A minimal Zotero reader sidebar chat for Gemini models.",
   "homepage": "https://example.com/zotero-gemini-chat",
   "author": "Your Name",
@@ -10,11 +10,11 @@
     "url": "git+https://github.com/example/zotero-gemini-chat.git"
   },
   "config": {
-    "addonName": "Zotero Sidebar Chat",
-    "addonID": "gemini-chat@local",
-    "addonRef": "GeminiChat",
-    "addonInstance": "GeminiChat",
-    "prefsPrefix": "extensions.zotero.geminiChat"
+    "addonName": "Zotero Research Copilot",
+    "addonID": "sidebar-chat@local",
+    "addonRef": "SidebarChat",
+    "addonInstance": "SidebarChat",
+    "prefsPrefix": "extensions.zotero.sidebarChat"
   },
   "main": "src/index.ts",
   "scripts": {
