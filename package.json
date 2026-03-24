@@ -11,6 +11,7 @@
   },
   "config": {
     "addonName": "Zotero Research Copilot",
+    "uiName": "Research Copilot",
     "addonID": "sidebar-chat@local",
     "addonRef": "SidebarChat",
     "addonInstance": "SidebarChat",

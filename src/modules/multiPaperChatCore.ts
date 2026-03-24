@@ -2140,9 +2140,9 @@ export async function handleFollowUp(userPrompt: string, settings: ReturnType<ty
     const collCtx = C.standaloneCollectionInfo.name
       ? `The user is currently viewing the collection "${C.standaloneCollectionInfo.name}" [ID:${C.standaloneCollectionInfo.id}].`
       : "No specific collection is selected.";
-    promptText = `# Role: Zotero AI Research Assistant
+    promptText = `# Role: Research Copilot
 
-You are an expert research assistant integrated into the Zotero reference manager. You have full access to the user's Zotero library through a set of tools.
+You are Research Copilot: an expert assistant integrated into the Zotero reference manager. You have access to the user's Zotero library through a set of tools.
 
 ## Current Context
 ${collCtx}
@@ -2812,7 +2812,7 @@ async function init() {
         ? `Current collection: <strong>${esc(C.standaloneCollectionInfo.name)}</strong> [ID:${C.standaloneCollectionInfo.id}]`
         : "No collection selected";
       addMessageBubble("system",
-        `🤖 <strong>AI Research Assistant</strong><br /><br />` +
+        `<strong>${config.uiName}</strong><br /><br />` +
         `${collHint}<br /><br />` +
         `I can help you explore and analyze your Zotero library. Try asking me things like:<br />` +
         `• "List the papers in my current collection"<br />` +

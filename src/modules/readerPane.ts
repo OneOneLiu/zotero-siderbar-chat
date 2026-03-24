@@ -298,10 +298,10 @@ export function registerSidebarButton(getPaneKey: () => string) {
         );
         btn.id = "gemini-chat-sidebar-button";
         btn.className = "gemini-chat-jump";
-        btn.textContent = "Gemini";
+        btn.textContent = "Research Copilot";
         btn.setAttribute("data-l10n-id", getLocaleID("sidebar-button"));
 
-        btn.title = "Open Gemini chat pane";
+        btn.title = "Open Research Copilot chat pane";
         btn.style.cssText =
           "border:1px solid transparent;border-radius:4px;padding:2px 6px;cursor:pointer;background:var(--color-field-bg, #ececec);";
         btn.addEventListener("click", (e) => {
@@ -1444,7 +1444,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
       if (!settings.apiKey) {
         addon.pushMessage(itemKey, {
           role: "system",
-          text: `Missing API key. Set it in Preferences -> Zotero Research Copilot.`,
+          text: `Missing API key. Set it in Preferences → ${config.uiName}.`,
           at: Date.now(),
         });
         renderMessages(true);

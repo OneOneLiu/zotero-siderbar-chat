@@ -7,6 +7,10 @@ const RAG_MENU_ID = "gemini-chat-build-rag-index";
 const STANDALONE_MENU_ID = "gemini-chat-standalone-assistant";
 const RESUME_MENU_ID = "gemini-chat-resume-analysis";
 
+function menuItemIconChrome(addonRef: string): string {
+  return `chrome://${addonRef}/content/icons/favicon.png`;
+}
+
 function findPdfAttachment(item: Zotero.Item): Zotero.Item | null {
   if (item.isAttachment() && item.attachmentContentType === "application/pdf") {
     return item;
@@ -43,6 +47,7 @@ export function registerContextMenu(win: Window, addon: Addon) {
   menuItem.id = MENU_ID;
   menuItem.setAttribute("label", "AI Multi-paper Analysis");
   menuItem.setAttribute("class", "menuitem-iconic");
+  menuItem.setAttribute("image", menuItemIconChrome(config.addonRef));
 
   menuItem.addEventListener("command", () => {
     try {
@@ -102,6 +107,7 @@ export function registerContextMenu(win: Window, addon: Addon) {
     ragItem.id = RAG_MENU_ID;
     ragItem.setAttribute("label", "Build RAG Index");
     ragItem.setAttribute("class", "menuitem-iconic");
+    ragItem.setAttribute("image", menuItemIconChrome(config.addonRef));
 
     ragItem.addEventListener("command", async () => {
       try {
@@ -169,6 +175,7 @@ export function registerContextMenu(win: Window, addon: Addon) {
     resumeItem.id = RESUME_MENU_ID;
     resumeItem.setAttribute("label", "Resume AI Analysis from Note");
     resumeItem.setAttribute("class", "menuitem-iconic");
+    resumeItem.setAttribute("image", menuItemIconChrome(config.addonRef));
     resumeItem.setAttribute("hidden", "true");
 
     resumeItem.addEventListener("command", () => {
@@ -220,8 +227,9 @@ export function registerContextMenu(win: Window, addon: Addon) {
 
     const standaloneItem = doc.createXULElement("menuitem");
     standaloneItem.id = STANDALONE_MENU_ID;
-    standaloneItem.setAttribute("label", "AI Research Assistant");
+    standaloneItem.setAttribute("label", config.uiName);
     standaloneItem.setAttribute("class", "menuitem-iconic");
+    standaloneItem.setAttribute("image", menuItemIconChrome(config.addonRef));
 
     standaloneItem.addEventListener("command", () => {
       try {

@@ -1,4 +1,4 @@
-GeminiChat-section-header = Gemini Chat
-GeminiChat-section-sidenav = Gemini
-GeminiChat-sidebar-button = Gemini
+GeminiChat-section-header = Research Copilot
+GeminiChat-section-sidenav = Research Copilot
+GeminiChat-sidebar-button = Research Copilot
 
