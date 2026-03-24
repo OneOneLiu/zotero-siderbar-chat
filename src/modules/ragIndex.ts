@@ -84,7 +84,7 @@ function detectSection(line: string): string | null {
 
 // ---------- Chunking ----------
 
-export function splitIntoChunks(fullText: string): Chunk[] {
+export async function splitIntoChunks(fullText: string): Promise<Chunk[]> {
   const lines = fullText.split(/\n/);
   const paragraphs: { text: string; section: string }[] = [];
   let currentSection = "";
@@ -122,6 +122,8 @@ export function splitIntoChunks(fullText: string): Chunk[] {
 
   for (const para of paragraphs) {
     const paraWords = para.text.split(/\s+/).length;
+
+    if (chunkId % 5 === 0) await new Promise(r => setTimeout(r, 0)); // Yield to main thread to prevent UI freeze
 
     if (paraWords > MAX_CHUNK_WORDS) {
       if (accumText) {
@@ -184,8 +186,8 @@ function calcAvgChunkLen(chunks: Chunk[]): number {
   return total / chunks.length;
 }
 
-export function buildRagIndexFromText(itemId: number, title: string, fullText: string): RagIndex {
-  const chunks = splitIntoChunks(fullText);
+export async function buildRagIndexFromText(itemId: number, title: string, fullText: string): Promise<RagIndex> {
+  const chunks = await splitIntoChunks(fullText);
   return {
     version: RAG_VERSION,
     itemId,
@@ -280,7 +282,7 @@ export async function buildRagIndexForItem(item: any): Promise<RagIndex | null> 
   const title = String(parent.getField?.("title") || "Untitled");
   const parentId = parent.isAttachment?.() ? parent.id : (item.isRegularItem?.() ? item.id : att.id);
 
-  const index = buildRagIndexFromText(parentId, title, fullText);
+  const index = await buildRagIndexFromText(parentId, title, fullText);
   await saveRagIndex(index);
   return index;
 }

@@ -410,7 +410,7 @@ async function ensureRagForPaper(paperId: number): Promise<RagIndex | null> {
 
   const parent = pdf.parentItem || pdf;
   const title = String(parent.getField?.("title") || "Untitled");
-  idx = buildRagIndexFromText(paperId, title, text);
+  idx = await buildRagIndexFromText(paperId, title, text);
   await saveRagIndex(idx);
   C.ragIndices.set(paperId, idx);
   return idx;
@@ -486,12 +486,18 @@ async function callAI(s: ReturnType<typeof getFullAnalysisSettings>, contents: a
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   const j: any = await res.json();
   if (s.provider === "gemini") {
+    if (j?.error?.message) throw new Error(`API Error: ${j.error.message}`);
     const c = j?.candidates || j?.[0]?.candidates;
-    if (c?.[0]?.content?.parts?.[0]?.text) return c[0].content.parts[0].text;
+    if (c?.[0]?.content?.parts?.[0]?.text !== undefined) return c[0].content.parts[0].text;
     if (Array.isArray(j)) { let f = ""; for (const x of j) { const t = x?.candidates?.[0]?.content?.parts?.[0]?.text; if (t) f += t; } if (f) return f; }
-    throw new Error("Unexpected Gemini response");
+    throw new Error(`Unexpected Gemini response: ${JSON.stringify(j)}`);
   }
-  return j?.choices?.[0]?.message?.content || (() => { throw new Error("Unexpected response"); })();
+  
+  if (j?.error?.message) throw new Error(`API Error: ${j.error.message}`);
+  const content = j?.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content;
+  
+  throw new Error(`Unexpected response: ${JSON.stringify(j)}`);
 }
 
 async function* callAIStream(s: ReturnType<typeof getFullAnalysisSettings>, contents: any[], modelOverride?: string): AsyncGenerator<string> {
@@ -1751,7 +1757,7 @@ async function executeTool(name: string, args: Record<string, any>, settings: Re
         if (!text) return `Error: Could not extract text from PDF.`;
         const parent = pdf.parentItem || pdf;
         const title = String(parent.getField?.("title") || p.title);
-        const newIdx = buildRagIndexFromText(p.id, title, text);
+        const newIdx = await buildRagIndexFromText(p.id, title, text);
         await saveRagIndex(newIdx);
         C.ragIndices.set(p.id, newIdx);
         await updateRagStatusIndicators();
