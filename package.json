@@ -1,13 +1,13 @@
 {
-  "name": "zotero-sidebar-chat",
+  "name": "zotero-research-copilot",
   "type": "module",
   "version": "2.2.0",
-  "description": "A minimal Zotero reader sidebar chat for Gemini models.",
-  "homepage": "https://example.com/zotero-gemini-chat",
+  "description": "Zotero Research Copilot — AI research assistant for Zotero: reader sidebar chat, library-wide assistant, and multi-paper analysis. Works with Gemini, OpenAI-compatible APIs, DeepSeek, Doubao, and other models.",
+  "homepage": "https://github.com/example/zotero-research-copilot",
   "author": "Your Name",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/example/zotero-gemini-chat.git"
+    "url": "git+https://github.com/example/zotero-research-copilot.git"
   },
   "config": {
     "addonName": "Zotero Research Copilot",
