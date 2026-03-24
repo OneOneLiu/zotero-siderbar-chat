@@ -22,6 +22,7 @@ import {
   type RagIndex,
 } from "./ragIndex";
 import { searchChunksBalanced } from "./ragSearch";
+import { initMathCopyListener } from "./multiPaperChatCore";
 
 Zotero.debug("[GeminiChat] Loading readerPane module...");
 
@@ -191,7 +192,7 @@ function getMarkdown() {
         delimiters: ["dollars", "brackets"],
         katexOptions: {
           macros: { "\\RR": "\\mathbb{R}" },
-          output: "html", // Prevent MathML/HTML duplication
+          output: "htmlAndMathml", // Keep MathML so the copy button listener can extract the <annotation> source!
           throwOnError: false
         },
       });
@@ -225,12 +226,12 @@ function getMarkdownForNote() {
           }
         },
       });
-      // Skip mermaid logic for notes since note viewer doesn't support interactive Mermaid rendering
-      mdForNote.use(tm, { engine: katex, delimiters: ["dollars", "brackets"], katexOptions: { macros: { "\\RR": "\\mathbb{R}" }, output: "mathml", throwOnError: false } });
+      // Deliberately omitted mdForNote.use(tm, ...) so that notes retain raw $$ LaTeX for native plain reading and Zotero plugin parsing.
     } catch (e) { }
   }
   return mdForNote;
 }
+
 
 function renderMdForNote(text: string): string {
   try { return getMarkdownForNote().render(normalizeMathDelimiters(text)); } catch (_) { return escapeHtml(text); }
@@ -466,6 +467,29 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
             box-shadow: 0 2px 5px rgba(0,0,0,0.08);
             color: #007AFF;
           }
+          
+          /* Copy Math Button */
+          .katex-display, .katex { position: relative; }
+          .copy-math-btn {
+            position: absolute;
+            top: -12px;
+            right: 0;
+            display: none;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            border: none;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            cursor: pointer;
+            z-index: 50;
+            white-space: nowrap;
+          }
+          .katex-display:hover .copy-math-btn,
+          .katex:hover .copy-math-btn {
+            display: block;
+          }
+          .copy-math-btn:hover { background: black; }
 
           .gemini-chat-messages {
             flex: 1;
@@ -475,6 +499,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
             flex-direction: column;
             gap: 16px;
           }
+
 
           .gemini-chat-bubble {
             max-width: 88%;
@@ -952,6 +977,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
     // --- Messages ---
     const messageList = createElement("div");
     messageList.setAttribute("class", "gemini-chat-messages");
+    initMathCopyListener(messageList);
 
     // --- Interaction Logic (Selection & Formatting) ---
     let selectionToolbar: HTMLElement | null = null;

@@ -76,7 +76,7 @@ function getMarkdown() {
       xhtmlOut: true,
     });
     try {
-      md.use(tm, { engine: katex, delimiters: ["dollars", "brackets"], katexOptions: { output: "html", throwOnError: false } });
+      md.use(tm, { engine: katex, delimiters: ["dollars", "brackets"], katexOptions: { output: "htmlAndMathml", throwOnError: false } });
     } catch (_e) { /* optional */ }
   }
   return md;
@@ -984,11 +984,48 @@ function getMarkdownForNote() {
       breaks: true,
       xhtmlOut: true,
     });
-    try {
-      mdForNote.use(tm, { engine: katex, delimiters: ["dollars", "brackets"], katexOptions: { output: "mathml", throwOnError: false } });
-    } catch (_e) { /* optional */ }
+    // Deliberately omitted mdForNote.use(tm, ...) so that notes retain raw $$ LaTeX for native plain reading and Zotero plugin parsing.
   }
   return mdForNote;
+}
+
+export function initMathCopyListener(container: HTMLElement) {
+  container.addEventListener("mouseover", (e) => {
+    const target = e.target as HTMLElement;
+    if (!target) return;
+    const mathSpan = target.closest(".katex-display, .katex") as HTMLElement | null;
+    if (mathSpan && !mathSpan.querySelector(".copy-math-btn")) {
+      const annotation = mathSpan.querySelector("annotation[encoding='application/x-tex']");
+      if (annotation && annotation.textContent) {
+        const tex = annotation.textContent;
+        const btn = container.ownerDocument.createElement("button");
+        btn.className = "copy-math-btn";
+        btn.textContent = "Copy LaTeX";
+        btn.title = "Copy LaTeX source code";
+        btn.onclick = async (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          try {
+            if (navigator?.clipboard?.writeText) {
+              await navigator.clipboard.writeText(tex);
+            } else {
+              const ZoteroContext = typeof Zotero !== "undefined" ? Zotero : null;
+              if (ZoteroContext) {
+                const cb = Components.classes["@mozilla.org/widget/clipboardhelper;1"].getService(Components.interfaces.nsIClipboardHelper);
+                cb.copyString(tex);
+              }
+            }
+            const orig = btn.textContent;
+            btn.textContent = "Copied!";
+            setTimeout(() => { btn.textContent = orig; }, 1500);
+          } catch (e) {
+            Zotero.debug("[ResearchCopilot] Math copy failed: " + e);
+          }
+        };
+        mathSpan.appendChild(btn);
+      }
+    }
+  });
 }
 
 function renderMdForNote(text: string): string {
@@ -2413,18 +2450,30 @@ interface SessionData {
 }
 
 async function parseSessionFromNote(noteHtml: string): Promise<SessionData | null> {
+  let attItem: Zotero.Item | any = null;
+
   const attMatch = noteHtml.match(/data-analysis-attachment-id="(\d+)"/);
   if (attMatch) {
+    const attId = parseInt(attMatch[1], 10);
+    attItem = Zotero.Items.get(attId);
+  }
+
+  if (!attItem) {
+    const fullMatch = noteHtml.match(/zotero:\/\/select\/items\/(\d+)_([A-Z0-9]{8})/);
+    if (fullMatch) {
+      const libId = parseInt(fullMatch[1], 10);
+      const key = fullMatch[2];
+      attItem = Zotero.Items.getByLibraryAndKey(libId, key);
+    }
+  }
+
+  if (attItem && !attItem.deleted && attItem.isAttachment()) {
     try {
-      const attId = parseInt(attMatch[1], 10);
-      const attItem = Zotero.Items.get(attId);
-      if (attItem && !attItem.deleted && attItem.isAttachment()) {
-        const path = await attItem.getFilePathAsync();
-        if (path && await IOUtils.exists(path)) {
-          const raw = await IOUtils.readUTF8(path);
-          const data = JSON.parse(raw) as SessionData;
-          if (data.version && Array.isArray(data.chatHistory)) return data;
-        }
+      const path = await attItem.getFilePathAsync();
+      if (path && await IOUtils.exists(path)) {
+        const raw = await IOUtils.readUTF8(path);
+        const data = JSON.parse(raw) as SessionData;
+        if (data.version && Array.isArray(data.chatHistory)) return data;
       }
     } catch (e) {
       Zotero.debug("[ResearchCopilot] Failed to read session from attachment: " + e);
@@ -2497,7 +2546,7 @@ async function showLoadSessionPicker() {
   }
 
   const rows: any[] = await Zotero.DB.queryAsync(
-    `SELECT itemID FROM itemNotes WHERE note LIKE '%data-analysis-session%'
+    `SELECT itemID FROM itemNotes WHERE note LIKE '%data-analysis-session%' OR note LIKE '%data-analysis-attachment-id%'
      ORDER BY itemID DESC LIMIT 50`
   );
   if (!rows || rows.length === 0) {
@@ -2613,6 +2662,8 @@ async function init() {
 
   const input = $("chat-input") as HTMLTextAreaElement;
   const btn = $("btn-send") as HTMLButtonElement;
+  
+  initMathCopyListener($("chat-messages"));
 
   btn.addEventListener("click", handleSend);
   input.addEventListener("keydown", (e) => {

@@ -149,6 +149,20 @@
     .msg summary { cursor: pointer; font-weight: 600; color: #007AFF; padding: 6px 0; }
     .msg hr { border: none; border-top: 1px solid #e5e5e5; margin: 12px 0; }
     .msg strong { font-weight: 600; }
+    
+    /* --- Math Copy Button --- */
+    .katex-display, .katex { position: relative; }
+    .copy-math-btn {
+      position: absolute;
+      top: -12px; right: 0;
+      display: none; background: rgba(0, 0, 0, 0.7);
+      color: white; border: none; padding: 2px 6px;
+      border-radius: 4px; font-size: 10px;
+      cursor: pointer; z-index: 50; white-space: nowrap;
+    }
+    .katex-display:hover .copy-math-btn,
+    .katex:hover .copy-math-btn { display: block; }
+    .copy-math-btn:hover { background: black; }
 
     /* --- Input area --- */
     .input-area {
