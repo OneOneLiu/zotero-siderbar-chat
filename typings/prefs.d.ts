@@ -7,9 +7,9 @@
 declare namespace _ZoteroTypes {
   interface Prefs {
     PluginPrefsMap: {
-      "extensions.zotero.geminiChat.apiBase": string;
-      "extensions.zotero.geminiChat.model": string;
-      "extensions.zotero.geminiChat.apiKey": string;
+      "apiBase": string;
+      "model": string;
+      "apiKey": string;
     };
   }
 }

@@ -17,6 +17,7 @@ export interface ChatContext {
   analysisDoc: string;
   questionUnderstandingDoc: string;
   savedNoteId: number | null;
+  savedAttachmentId?: number;
   ragIndices: Map<number, RagIndex>;
   standaloneMode: boolean;
   standaloneCollectionInfo: { id?: number; name?: string };
@@ -30,6 +31,7 @@ export function createEmptyChatContext(): ChatContext {
     analysisDoc: "",
     questionUnderstandingDoc: "",
     savedNoteId: null,
+    savedAttachmentId: undefined,
     ragIndices: new Map(),
     standaloneMode: false,
     standaloneCollectionInfo: {},

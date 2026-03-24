@@ -692,8 +692,33 @@ function buildSessionJson(): string {
   return JSON.stringify(session);
 }
 
+async function getOrCreateHistoryDataset(libraryID: number, collectionId?: number): Promise<number | undefined> {
+  try {
+    const s = new Zotero.Search();
+    s.libraryID = libraryID;
+    s.addCondition("itemType", "is", "dataset");
+    s.addCondition("title", "is", "Research Copilot History");
+    if (collectionId) s.addCondition("collection", "is", String(collectionId));
+    const results = await s.search();
+    if (results && results.length > 0) return results[0];
+
+    const dataset = new Zotero.Item("dataset");
+    dataset.libraryID = libraryID;
+    dataset.setField("title", "Research Copilot History");
+    await dataset.saveTx();
+
+    if (collectionId) {
+      dataset.addToCollection(collectionId);
+      await dataset.saveTx();
+    }
+    return dataset.id;
+  } catch (e) {
+    Zotero.debug("[ResearchCopilot] getOrCreateHistoryDataset failed: " + e);
+    return undefined;
+  }
+}
+
 export async function saveAnalysisNote() {
-  // Reader sidebar uses its own `saveFullSessionToNote`; avoid duplicate analysis notes.
   if (analysisMessagesHost) return;
   try {
     let note: any;
@@ -745,7 +770,53 @@ export async function saveAnalysisNote() {
     const titleSuffix = topicHint ? ` — ${esc(topicHint)}` : "";
 
     const sessionJson = buildSessionJson();
-    const sessionBlock = `<div data-analysis-session style="display:none">${esc(sessionJson)}</div>`;
+    let sessionBlock = "";
+    try {
+      let attItem: any;
+      if (C.savedAttachmentId) {
+        const existing = Zotero.Items.get(C.savedAttachmentId);
+        if (existing && !existing.deleted && existing.isAttachment()) {
+          attItem = existing;
+        }
+      }
+
+      if (!attItem) {
+        const tmpFile = PathUtils.join(PathUtils.tempDir, `Copilot_Session_${Date.now()}.json`);
+        await IOUtils.writeUTF8(tmpFile, sessionJson);
+
+        let targetCollectionId = C.standaloneCollectionInfo?.id;
+        if (!targetCollectionId && note.parentID) {
+          const parent = Zotero.Items.get(note.parentID);
+          if (parent) {
+            const colls = parent.getCollections();
+            if (colls.length > 0) targetCollectionId = colls[0];
+          }
+        }
+        if (!targetCollectionId && C.papers.length > 0) {
+          const firstPaper = Zotero.Items.get(C.papers[0].id);
+          if (firstPaper) {
+            const colls = firstPaper.getCollections();
+            if (colls.length > 0) targetCollectionId = colls[0];
+          }
+        }
+
+        const parentDatasetId = await getOrCreateHistoryDataset(note.libraryID, targetCollectionId);
+
+        attItem = await Zotero.Attachments.importFromFile({
+          file: tmpFile,
+          libraryID: note.libraryID,
+          parentItemID: parentDatasetId
+        });
+        C.savedAttachmentId = attItem.id;
+      } else {
+        const path = await attItem.getFilePathAsync();
+        if (path) await IOUtils.writeUTF8(path, sessionJson);
+      }
+      sessionBlock = `<div data-analysis-attachment-id="${attItem.id}" style="display:none"></div>`;
+    } catch (e) {
+      Zotero.debug("[ResearchCopilot] Fallback to embedded HTML session block due to attachment error: " + e);
+      sessionBlock = `<div data-analysis-session style="display:none">${esc(sessionJson)}</div>`;
+    }
 
     const savedAt = new Date().toLocaleString();
     const html = `<h1>📊 Analysis [${ts}]${titleSuffix}</h1>
@@ -2324,7 +2395,25 @@ interface SessionData {
   analysisDoc: string;
 }
 
-function parseSessionFromNote(noteHtml: string): SessionData | null {
+async function parseSessionFromNote(noteHtml: string): Promise<SessionData | null> {
+  const attMatch = noteHtml.match(/data-analysis-attachment-id="(\d+)"/);
+  if (attMatch) {
+    try {
+      const attId = parseInt(attMatch[1], 10);
+      const attItem = Zotero.Items.get(attId);
+      if (attItem && !attItem.deleted && attItem.isAttachment()) {
+        const path = await attItem.getFilePathAsync();
+        if (path && await IOUtils.exists(path)) {
+          const raw = await IOUtils.readUTF8(path);
+          const data = JSON.parse(raw) as SessionData;
+          if (data.version && Array.isArray(data.chatHistory)) return data;
+        }
+      }
+    } catch (e) {
+      Zotero.debug("[ResearchCopilot] Failed to read session from attachment: " + e);
+    }
+  }
+
   const m = noteHtml.match(/data-analysis-session[^>]*>([\s\S]*?)<\/div>/);
   if (!m) return null;
   try {
@@ -2405,7 +2494,7 @@ async function showLoadSessionPicker() {
       const item = Zotero.Items.get(r.itemID);
       if (!item || item.deleted) continue;
       const html = item.getNote?.() || "";
-      const s = parseSessionFromNote(html);
+      const s = await parseSessionFromNote(html);
       if (!s) continue;
       const paperCount = s.papers?.length || 0;
       const qCount = s.chatHistory?.filter((m: ChatMsg) => m.role === "user").length || 0;
@@ -2557,7 +2646,7 @@ async function init() {
         const noteItem = Zotero.Items.get(parsed.noteId);
         if (noteItem) {
           const html = noteItem.getNote?.() || "";
-          const session = parseSessionFromNote(html);
+          const session = await parseSessionFromNote(html);
           if (session) {
             C.savedNoteId = parsed.noteId;
             await restoreSession(session);
