@@ -692,28 +692,24 @@ function buildSessionJson(): string {
   return JSON.stringify(session);
 }
 
+/**
+ * One dataset per library titled "Research Copilot History". All session JSON attachments
+ * are children of this item. Collection is only used when creating a new dataset (optional
+ * placement); we never create a second dataset just because the canonical one lives elsewhere.
+ */
 async function getOrCreateHistoryDataset(libraryID: number, collectionId?: number): Promise<number | undefined> {
   try {
     const s = new Zotero.Search();
     s.libraryID = libraryID;
     s.addCondition("itemType", "is", "dataset");
     s.addCondition("title", "is", "Research Copilot History");
-    
+
     const results = await s.search();
-    
+
     if (results && results.length > 0) {
-      if (collectionId) {
-        for (const id of results) {
-          const item = Zotero.Items.get(id);
-          if (item && !item.deleted && item.getCollections().includes(collectionId)) {
-            return id;
-          }
-        }
-      } else {
-        for (const id of results) {
-          const item = Zotero.Items.get(id);
-          if (item && !item.deleted) return id;
-        }
+      for (const id of results) {
+        const item = Zotero.Items.get(id);
+        if (item && !item.deleted) return id;
       }
     }
 
