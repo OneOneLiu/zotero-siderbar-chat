@@ -199,7 +199,10 @@ export function registerContextMenu(win: Window, addon: Addon) {
         const hasAnalysisNote = selected.some((it: any) => {
           if (!it.isNote?.()) return false;
           const html = it.getNote?.() || "";
-          return html.includes("data-analysis-session") || html.includes("data-analysis-attachment-id") || html.includes("zotero://select/items/");
+          return html.includes("data-analysis-session")
+            || html.includes("data-analysis-attachment-lkh")
+            || html.includes("data-analysis-attachment-id")
+            || html.includes("zotero://select/items/");
         });
         resumeItem.setAttribute("hidden", hasAnalysisNote ? "false" : "true");
       } catch {
