@@ -771,6 +771,10 @@ export async function saveAnalysisNote() {
 
     const sessionJson = buildSessionJson();
     let sessionBlock = "";
+    let linkHtml = "";
+    
+    const niceName = `Analysis_${ts}${titleSuffix}`.replace(/[\\/:*?"<>|\r\n]/g, "_").substring(0, 100);
+
     try {
       let attItem: any;
       if (C.savedAttachmentId) {
@@ -781,7 +785,7 @@ export async function saveAnalysisNote() {
       }
 
       if (!attItem) {
-        const tmpFile = PathUtils.join(PathUtils.tempDir, `Copilot_Session_${Date.now()}.json`);
+        const tmpFile = PathUtils.join(PathUtils.tempDir, `${niceName}.json`);
         await IOUtils.writeUTF8(tmpFile, sessionJson);
 
         let targetCollectionId = C.standaloneCollectionInfo?.id;
@@ -807,12 +811,25 @@ export async function saveAnalysisNote() {
           libraryID: note.libraryID,
           parentItemID: parentDatasetId
         });
+        
+        attItem.setField("title", `Session Data: ${niceName}`);
+        await attItem.saveTx();
+
         C.savedAttachmentId = attItem.id;
       } else {
         const path = await attItem.getFilePathAsync();
         if (path) await IOUtils.writeUTF8(path, sessionJson);
+        
+        if (attItem.getField("title") !== `Session Data: ${niceName}`) {
+          attItem.setField("title", `Session Data: ${niceName}`);
+          await attItem.saveTx();
+        }
       }
+      
       sessionBlock = `<div data-analysis-attachment-id="${attItem.id}" style="display:none"></div>`;
+      if (attItem.key) {
+        linkHtml = ` · <strong><a href="zotero://select/items/${note.libraryID}_${attItem.key}">[View Session JSON]</a></strong>`;
+      }
     } catch (e) {
       Zotero.debug("[ResearchCopilot] Fallback to embedded HTML session block due to attachment error: " + e);
       sessionBlock = `<div data-analysis-session style="display:none">${esc(sessionJson)}</div>`;
@@ -820,7 +837,7 @@ export async function saveAnalysisNote() {
 
     const savedAt = new Date().toLocaleString();
     const html = `<h1>📊 Analysis [${ts}]${titleSuffix}</h1>
-<p><em>Saved: ${savedAt} · ${C.papers.length} paper(s) · ${C.chatHistory.filter(m => m.role === "user").length} question(s)</em></p>
+<p><em>Saved: ${savedAt} · ${C.papers.length} paper(s) · ${C.chatHistory.filter(m => m.role === "user").length} question(s)${linkHtml}</em></p>
 ${sessionBlock}
 <hr/>
 ${paperInfoHtml}
