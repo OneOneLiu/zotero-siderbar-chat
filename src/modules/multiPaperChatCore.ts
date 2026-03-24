@@ -698,9 +698,24 @@ async function getOrCreateHistoryDataset(libraryID: number, collectionId?: numbe
     s.libraryID = libraryID;
     s.addCondition("itemType", "is", "dataset");
     s.addCondition("title", "is", "Research Copilot History");
-    if (collectionId) s.addCondition("collection", "is", String(collectionId));
+    
     const results = await s.search();
-    if (results && results.length > 0) return results[0];
+    
+    if (results && results.length > 0) {
+      if (collectionId) {
+        for (const id of results) {
+          const item = Zotero.Items.get(id);
+          if (item && !item.deleted && item.getCollections().includes(collectionId)) {
+            return id;
+          }
+        }
+      } else {
+        for (const id of results) {
+          const item = Zotero.Items.get(id);
+          if (item && !item.deleted) return id;
+        }
+      }
+    }
 
     const dataset = new Zotero.Item("dataset");
     dataset.libraryID = libraryID;
@@ -827,6 +842,7 @@ export async function saveAnalysisNote() {
       }
       
       sessionBlock = `<div data-analysis-attachment-id="${attItem.id}" style="display:none"></div>`;
+      sessionBlock += `\n<span class="research-copilot-session-id" style="display:none;">ResearchCopilotSessionID:${attItem.id}</span>`;
       if (attItem.key) {
         linkHtml = ` · <strong><a href="zotero://select/items/${note.libraryID}_${attItem.key}">[View Session JSON]</a></strong>`;
       }
@@ -2452,10 +2468,18 @@ interface SessionData {
 async function parseSessionFromNote(noteHtml: string): Promise<SessionData | null> {
   let attItem: Zotero.Item | any = null;
 
-  const attMatch = noteHtml.match(/data-analysis-attachment-id="(\d+)"/);
-  if (attMatch) {
-    const attId = parseInt(attMatch[1], 10);
+  const textMatch = noteHtml.match(/ResearchCopilotSessionID:(\d+)/);
+  if (textMatch) {
+    const attId = parseInt(textMatch[1], 10);
     attItem = Zotero.Items.get(attId);
+  }
+
+  if (!attItem) {
+    const attMatch = noteHtml.match(/data-analysis-attachment-id="(\d+)"/);
+    if (attMatch) {
+      const attId = parseInt(attMatch[1], 10);
+      attItem = Zotero.Items.get(attId);
+    }
   }
 
   if (!attItem) {
@@ -2546,7 +2570,7 @@ async function showLoadSessionPicker() {
   }
 
   const rows: any[] = await Zotero.DB.queryAsync(
-    `SELECT itemID FROM itemNotes WHERE note LIKE '%data-analysis-session%' OR note LIKE '%data-analysis-attachment-id%'
+    `SELECT itemID FROM itemNotes WHERE note LIKE '%data-analysis-session%' OR note LIKE '%data-analysis-attachment-id%' OR note LIKE '%ResearchCopilotSessionID:%'
      ORDER BY itemID DESC LIMIT 50`
   );
   if (!rows || rows.length === 0) {
