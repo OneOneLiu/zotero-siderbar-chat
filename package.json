@@ -3,11 +3,11 @@
   "type": "module",
   "version": "2.2.0",
   "description": "Zotero Research Copilot — AI research assistant for Zotero: reader sidebar chat, library-wide assistant, and multi-paper analysis. Works with Gemini, OpenAI-compatible APIs, DeepSeek, Doubao, and other models.",
-  "homepage": "https://github.com/example/zotero-research-copilot",
+  "homepage": "https://github.com/OneOneLiu/Zotero-Research-Copilot",
   "author": "Your Name",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/example/zotero-research-copilot.git"
+    "url": "git+https://github.com/OneOneLiu/Zotero-Research-Copilot.git"
   },
   "config": {
     "addonName": "Zotero Research Copilot",

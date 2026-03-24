@@ -1,133 +1,83 @@
 # Zotero Research Copilot
 
-> [English](#english) | [简体中文](#简体中文)
+[![Zotero Plugin Template](https://img.shields.io/badge/Built%20with-Zotero%20Plugin%20Template-0366d6?style=flat&logo=github)](https://github.com/windingwind/zotero-plugin-template)
+[![GitHub release](https://img.shields.io/github/v/release/OneOneLiu/Zotero-Research-Copilot?label=release)](https://github.com/OneOneLiu/Zotero-Research-Copilot/releases/latest)
+[![Release date](https://img.shields.io/github/release-date/OneOneLiu/Zotero-Research-Copilot?label=released)](https://github.com/OneOneLiu/Zotero-Research-Copilot/releases)
+[![Latest release downloads](https://img.shields.io/github/downloads/OneOneLiu/Zotero-Research-Copilot/latest/total?label=downloads%20%28latest%20release%29)](https://github.com/OneOneLiu/Zotero-Research-Copilot/releases/latest)
+[![License](https://img.shields.io/github/license/OneOneLiu/Zotero-Research-Copilot)](https://github.com/OneOneLiu/Zotero-Research-Copilot/blob/main/LICENSE)
+
+[English](#english) · [简体中文](#简体中文)
 
 <div id="english"></div>
 
-[![Using Zotero Plugin Template](https://img.shields.io/badge/Using-Zotero%20Plugin%20Template-blue?style=flat-round&logo=github)](https://github.com/windingwind/zotero-plugin-template)
+## English
 
-## Introduction
+Zotero Research Copilot is a plugin for Zotero. It adds AI-assisted reading in the PDF reader, a library-wide assistant that can call tools against your collection, and a structured multi-paper analysis workflow. You configure an API provider and key in preferences; supported setups include Google Gemini, DeepSeek, and Doubao (Volcengine), along with OpenAI-style endpoints when you set a compatible base URL and model name.
 
-Zotero Research Copilot is a powerful Zotero 7 plugin that brings an agentic AI assistant directly into your research workflow. It features a reader sidebar chat for interacting with individual papers, an autonomous AI Research Assistant that can search your entire library, and a robust Multi-Paper Analysis pipeline for synthesizing information across multiple documents.
+### Reader sidebar chat
 
-It supports Google Gemini, DeepSeek, Doubao, and other AI models, allowing you to ask questions, summarize content, and analyze cross-paper relationships without leaving Zotero.
+With a PDF open in the reader, you can open the plugin’s pane in the sidebar and chat in the context of that item. Replies are rendered as Markdown (including code highlighting), math where applicable, and diagrams where supported. The reader integration is meant for quick questions and summaries tied to the document you are viewing.
 
-## Key Features
+### Library assistant (standalone)
 
-### 1. 🤖 AI Research Assistant (Agentic UI)
-- Launch a standalone AI Assistant from the Zotero main toolbar.
-- The AI acts as an autonomous agent equipped with **tool-calling capabilities**. It can independently:
-  - Search your Zotero library (by title, author, tag, collection).
-  - Load full texts, item metadata, notes, and user annotations.
-  - Read and build RAG indices for dynamic deeper search.
-  - Add and remove tags from items directly.
-- Engage in a natural conversation while the Assistant fetches the context it needs from your library automatically.
+From the main Zotero window you can open a separate chat window scoped to your library (or a chosen collection, depending on how you launch it). The assistant can use tools: for example searching items, reading metadata, notes, and annotations, working with full text where available, building or querying local RAG indices for selected papers, and adjusting tags. It plans steps in conversation rather than expecting you to drive every retrieval by hand.
 
-### 2. 📑 Multi-Paper Analysis Pipeline
-- Select multiple papers in your library and right-click -> **AI Multi-paper Analysis**.
-- Executes a rigorous **4-step analytical pipeline**:
-  1. **RAG Indexing**: Builds a local, offline vector index for the chosen PDFs.
-  2. **Question Understanding**: AI analyzes your initial query to determine the core concepts.
-  3. **Per-paper Extraction**: Extracts relevant information from each paper concurrently using the RAG index.
-  4. **Synthesis**: Synthesizes the extracted findings into a comprehensive cross-paper conclusion.
-- **Re-run Pipeline**: Effortlessly re-run the full 4-step pipeline on the selected papers after tweaking your prompt or asking a new high-level question.
+### Multi-paper analysis
 
-### 3. 📖 Unified Reader Sidebar Chat
-- Chat directly with AI models in the Zotero reader's right pane while reading a specific PDF.
-- Text selection formatting: highlight or markup text right inside the AI's response bubbles.
-- Responses support rich Markdown formatting and LaTeX math formulas.
+Select multiple items in the library, open the context menu, and choose the multi-paper analysis entry. The workflow is built around local RAG indices over the PDFs you include: it builds indices, refines your question, extracts per-paper material, then synthesizes across papers. Follow-up turns can reuse RAG search over the same set. You can opt to re-run the full pipeline when you change the main question.
 
-### 4. 💾 Session Saving & Loading
-- Chat sessions and analysis pipelines are automatically tracked.
-- Save your analysis sessions as standalone Zotero notes within the current collection.
-- Load previous chat histories directly from your connected notes to resume deep research conversations right where you left off.
+Session data can be saved into a Zotero note; structured history is stored as a JSON attachment, normally under a single library item titled **Research Copilot History** (created if needed). You can resume a saved session from the note via the context menu. After syncing to another computer, wait until attachment files have synced before resuming, since the JSON lives in stored attachments.
 
-### 5. ⚙️ Advanced Prompt Editor & Settings
-- **Custom Prompts**: Define custom hints and prompts in settings. Prompts appear as clickable chips for quick reuse.
-- **Visual Prompt Editing**: The preferences dialog offers an advanced editor with variable tag insertion (e.g., `{question}`, `{paper_list}`), real-time validation, and a live preview of how the prompts resolve.
-- **Multi-Model Support**: Seamlessly switch between different AI providers (Google Gemini, DeepSeek, Doubao) and models from a dropdown.
+### Settings
 
-## How to Use
+Preferences let you choose provider, model, API base, and key. There is a connection test before you rely on the plugin in daily use. You can edit system and analysis-related prompts, use placeholder variables where the UI documents them, and define quick prompts that appear as small actions in the chat UI.
 
-1. Download and install `zotero-sidebar-chat.xpi` from the Release page into Zotero 7.
-2. Go to **Edit → Settings → Zotero Research Copilot** to configure your preferred AI provider and enter your API key. 
-3. **IMPORTANT**: Click the **"Test Connection"** button and ensure the test is successful before using the chat functionality.
-4. **Reader Chat**: Open a PDF and click the chat icon in the right sidebar.
-5. **Multi-Paper Analysis**: Select 2 or more items in the library, right-click, and select "AI Multi-paper Analysis".
-6. **AI Assistant**: Click the AI icon in the main Zotero toolbar to chat with your entire library.
+### Install and requirements
 
-## License
+Build or download the packaged extension (`zotero-research-copilot.xpi` from [Releases](https://github.com/OneOneLiu/Zotero-Research-Copilot/releases)) and install it in Zotero 7. Open **Edit → Settings → Zotero Research Copilot**, enter credentials, and run **Test Connection**. Then use the reader sidebar button, the library assistant entry point, or the multi-paper analysis context menu as needed.
 
-This project is licensed under **[AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.en.html)**.
+### License
+
+This project is licensed under [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.en.html).
+
+### Acknowledgments
+
+Development started from the [Zotero Plugin Template](https://github.com/windingwind/zotero-plugin-template).
 
 ---
-
-## Acknowledgments
-
-- Built on the **[Zotero Plugin Template](https://github.com/windingwind/zotero-plugin-template)** 
-
-<br>
-<hr>
-<br>
 
 <div id="简体中文"></div>
 
-## 简介
+## 简体中文
 
-Zotero Research Copilot 是一款功能强大的 Zotero 7 插件，将具备 Agentic（智能体）能力的 AI 助手直接融入你的科研工作流中。它不仅提供针对单篇文献的阅读器侧边栏聊天，还拥有能全局搜索你文献库的 **AI 科研助手**，以及一套严谨的**多文献综合分析管线**。
+Zotero Research Copilot 是面向 Zotero 的插件：在阅读器里提供针对当前文献的侧边栏对话；在主界面提供可调用工具、面向整个文库（或指定文件夹）的助手；以及结构化的多文献分析流程。在设置中配置 API 服务商与密钥即可使用；内置常见配置包括 Google Gemini、DeepSeek、豆包（火山引擎），也可在填写兼容的接口地址与模型名时使用类 OpenAI 的接口。
 
-插件支持 Google Gemini、DeepSeek、豆包（Doubao）等主流 AI 模型，让你无需离开 Zotero 即可向 AI 提问、总结内容、并在多篇文献间抓取并合成交叉结论。
+### 阅读器侧边栏对话
 
-## 核心功能
+在阅读器中打开 PDF 后，可在侧栏打开插件面板，就当前条目向模型提问。回复按 Markdown 等方式排版，并支持代码高亮、公式与部分图表能力，适合在读论文时做摘录、追问和简要总结。
 
-### 1. 🤖 AI 科研助手 (Agentic 模式)
-- 从 Zotero 主界面的工具栏启动独立的 AI 助手对话框。
-- AI 作为具备自主能力的智能体，配备了**工具调用 (Tool-calling) 能力**。它可以自主执行：
-  - 搜索你的 Zotero 文献库（按标题、作者、标签、分类检索）。
-  - 加载文献全文、元数据、笔记和你的高亮批注。
-  - 动态构建和读取 RAG 向量索引，进行全文深度检索。
-  - 直接为指定的文献添加或删除标签。
-- 你只需用自然语言提问，AI 助手会自动规划并调用相应的工具去库中寻找答案。
+### 文库助手（独立窗口）
 
-### 2. 📑 严谨的多文献分析管线
-- 在文献库中多选文献，右键点击 -> **AI Multi-paper Analysis (多文献分析)**。
-- 启动高度结构化的 **4步分析管线**：
-  1. **RAG 索引构建**：针对选中文献在本地构建离线向量索引。
-  2. **问题理解**：AI 拆解你的提问，提取核心概念和子问题。
-  3. **单文献提取**：基于上一步的理解与 RAG 检索，并发在每篇文献中提取关键信息。
-  4. **综合分析**：将各个文献的提取结果汇总，进行交叉比对和最终结论合成。
-- **一键重跑管线**：在调整问题后，可以通过勾选 "Re-run full analysis"，再次对选中论文执行一次完整的四步工作流。
+在主窗口可打开独立对话界面，范围覆盖你的文库或当前所选集合（视启动方式而定）。助手可以使用多种工具，例如在库内检索条目、读取元数据与笔记批注、在可用时读取全文、为所选文献建立或查询本地 RAG 索引、修改标签等，由对话驱动检索与操作，而不必每一步都手动复制粘贴。
 
-### 3. 📖 阅读器侧边栏沉浸式对话
-- 在阅读特定 PDF 时，直接在右侧边栏与 AI 进行专属问答，无需打断阅读流。
-- 支持富文本渲染：完美支持 Markdown 格式和 LaTeX 数学公式。
-- 支持在 AI 的对话气泡中直接选中文本，添加高亮或标红格式。
+### 多文献分析
 
-### 4. 💾 会话保存与恢复
-- 所有的多文献分析和聊天记录均会被自动追踪。
-- **一键保存**：将多级对话和深度的文献分析一键保存为 Zotero 的独立笔记（自动落入当前选定的合集中）。
-- **随时恢复**：随时可以从保存的笔记中重新加载会话状态，继续之前的研究探讨。
+在文库中多选条目，通过右键菜单进入多文献分析。流程在本地为所选 PDF 建立 RAG 索引，再经历问题理解、分篇提取与跨篇综合等阶段；后续追问可在同一批文献上继续走检索。若在设置中开启相应选项，可以在更换主要问题后重新跑完整管线。
 
-### 5. ⚙️ 高级提示词编辑器与设置
-- **自定义快捷指令**：在设置中预设常用 Prompt，它们会呈现为方便点击的小按钮（Chips），避免重复输入。
-- **可视化提示词编辑**：设置面板中内置了高级的 Prompt 编辑器，支持一键插入变量标签（如 `{question}`，`{paper_list}`），具备实时非法变量校验，并提供所见即所得的 **预览面板**，让你直观掌握最终传给 AI 的系统指令。
-- **多模型无缝切换**：在聊天界面的下拉菜单中随时切换不同的提供商与模型（支持自定义接入）。
+会话可保存为 Zotero 笔记；结构化的对话与管线状态以 JSON 附件形式存放，通常挂在名为 **Research Copilot History** 的数据集条目下（若不存在会自动创建）。保存的笔记可通过右键菜单中的恢复入口继续会话。若使用同步，在另一台设备上需待附件文件同步完成后再恢复，因为 JSON 在附件中而非仅存在于笔记正文。
 
-## 如何使用
+### 设置
 
-1. 从 Release 页面下载 `zotero-sidebar-chat.xpi` 并将其拖入/安装到 Zotero 7。
-2. 进入 **编辑 → 设置 → Zotero Research Copilot**，选择你的 AI 服务商并填入 API Key。
-3. **注意**：填写后请务必点击 **"Test Connection"（测试连接）** 按钮，成功后方能使用核心对话功能。
-4. **单篇对话**：在阅读器打开 PDF 时点击右侧面板图标进入对话。
-5. **多文献分析**：在文献列表库中选中 2 篇以上的文献，右击选择相应菜单。
-6. **全局 AI 助手**：点击主界面主工具栏的机器人图标按钮，与整个文献库对话。
+可在首选项中选择服务商、模型、接口地址与密钥，并先使用「测试连接」确认可用。支持编辑系统与分析相关提示词、在界面说明的范围内使用占位变量，以及配置在对话界面中以快捷方式出现的常用提示。
 
-## 许可协议
+### 安装与使用
 
-本项目采用 **[AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.en.html)** 许可协议。
+从 [Releases](https://github.com/OneOneLiu/Zotero-Research-Copilot/releases) 下载打包扩展（一般为 `zotero-research-copilot.xpi`）并安装。在 **编辑 → 设置 → Zotero Research Copilot** 中填写 API 信息并测试连接后，即可使用阅读器侧栏按钮、文库助手入口以及多文献分析的右键菜单。
 
----
+### 许可
 
-## 致谢
+本项目以 [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.en.html) 许可发布。
 
-- 基于 **[Zotero Plugin Template](https://github.com/windingwind/zotero-plugin-template)** 构建
+### 致谢
+
+项目基于 [Zotero Plugin Template](https://github.com/windingwind/zotero-plugin-template) 起步开发。
