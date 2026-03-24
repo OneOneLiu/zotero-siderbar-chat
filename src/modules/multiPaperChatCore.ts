@@ -2260,7 +2260,7 @@ export async function processAnalysisUserMessage(userText: string): Promise<void
     return;
   }
   if (!settings.apiKey) {
-    addMessageBubble("system", "⚠️ Missing API key. Configure in Edit → Settings → Zotero Sidebar Chat.");
+    addMessageBubble("system", "⚠️ Missing API key. Configure in Edit → Settings → Research Copilot.");
     return;
   }
 
@@ -2304,7 +2304,7 @@ async function handleSend() {
   }
   const settings = getFullAnalysisSettings();
   if (!settings.apiKey) {
-    addMessageBubble("system", "⚠️ Missing API key. Configure in Edit → Settings → Zotero Sidebar Chat.");
+    addMessageBubble("system", "⚠️ Missing API key. Configure in Edit → Settings → Research Copilot.");
     return;
   }
 

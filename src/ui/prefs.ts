@@ -426,7 +426,7 @@ function initForm(Zotero: any) {
         model: currentModel,
       }, false);
 
-      const testContents = [{ role: "user" as const, parts: [{ text: `Ping from Zotero Sidebar Chat.` }] }];
+      const testContents = [{ role: "user" as const, parts: [{ text: `Ping from Zotero Research Copilot.` }] }];
       const payload = provider.formatRequest(testContents, currentModel);
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (selectedProvider !== "gemini") headers["Authorization"] = `Bearer ${apiKey.value.trim()}`;
