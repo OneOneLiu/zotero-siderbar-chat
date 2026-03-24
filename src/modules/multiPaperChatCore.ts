@@ -709,16 +709,16 @@ export async function saveAnalysisNote() {
       note.libraryID = Zotero.Libraries.userLibraryID;
     }
 
-    const paperInfoHtml = renderMd(buildPaperInfoSection());
+    const paperInfoHtml = renderMdForNote(buildPaperInfoSection());
 
     let quHtml = "";
     if (C.questionUnderstandingDoc) {
-      quHtml = `<h1>Question Understanding</h1>${renderMd(C.questionUnderstandingDoc)}`;
+      quHtml = `<h1>Question Understanding</h1>${renderMdForNote(C.questionUnderstandingDoc)}`;
     }
 
     let extractionsHtml = "";
     if (C.analysisDoc) {
-      extractionsHtml = `<h1>Per-paper Extractions</h1>${renderMd(C.analysisDoc)}`;
+      extractionsHtml = `<h1>Per-paper Extractions</h1>${renderMdForNote(C.analysisDoc)}`;
     }
 
     let chatHtml = "<h1>Chat History</h1>";
@@ -884,6 +884,27 @@ function normalizeMathDelimiters(src: string): string {
 
 function renderMd(text: string): string {
   try { return getMarkdown().render(normalizeMathDelimiters(text)); } catch (_) { return esc(text); }
+}
+
+let mdForNote: any = null;
+function getMarkdownForNote() {
+  if (!mdForNote) {
+    mdForNote = new MarkdownIt({
+      html: true,
+      linkify: true,
+      typographer: true,
+      breaks: true,
+      xhtmlOut: true,
+    });
+    try {
+      mdForNote.use(tm, { engine: katex, delimiters: ["dollars", "brackets"], katexOptions: { output: "mathml", throwOnError: false } });
+    } catch (_e) { /* optional */ }
+  }
+  return mdForNote;
+}
+
+function renderMdForNote(text: string): string {
+  try { return getMarkdownForNote().render(normalizeMathDelimiters(text)); } catch (_) { return esc(text); }
 }
 
 export function esc(t: string) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }

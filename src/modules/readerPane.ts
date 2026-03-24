@@ -206,6 +206,36 @@ function getMarkdown() {
   return md;
 }
 
+let mdForNote: any = null;
+function getMarkdownForNote() {
+  if (!mdForNote) {
+    try {
+      mdForNote = new MarkdownIt({
+        xhtmlOut: true,
+        html: true,
+        linkify: true,
+        typographer: true,
+        breaks: true,
+        highlight: (str: string, lang: string) => {
+          if (lang && hljs.getLanguage(lang)) {
+            try { return `<pre class="gemini-code-block hljs"><code>${hljs.highlight(str, { language: lang, ignoreIllegals: true }).value}</code></pre>`; } catch (e) { }
+          }
+          try { return `<pre class="gemini-code-block hljs"><code>${hljs.highlightAuto(str).value}</code></pre>`; } catch (e) {
+            return `<pre class="gemini-code-block"><code>${escapeHtml(str)}</code></pre>`;
+          }
+        },
+      });
+      // Skip mermaid logic for notes since note viewer doesn't support interactive Mermaid rendering
+      mdForNote.use(tm, { engine: katex, delimiters: ["dollars", "brackets"], katexOptions: { macros: { "\\RR": "\\mathbb{R}" }, output: "mathml", throwOnError: false } });
+    } catch (e) { }
+  }
+  return mdForNote;
+}
+
+function renderMdForNote(text: string): string {
+  try { return getMarkdownForNote().render(normalizeMathDelimiters(text)); } catch (_) { return escapeHtml(text); }
+}
+
 type RenderOptions = {
   body: HTMLElement;
   item: Zotero.Item;
@@ -1568,7 +1598,7 @@ async function saveFullSessionToNote(item: Zotero.Item, messages: ChatMessage[],
       // We can heuristic check? Or just trust markdown-it to handle it.
       // If m.text starts with <, assume HTML?
 
-      content = getMarkdown().render(normalizeMathDelimiters(m.text));
+      content = renderMdForNote(m.text);
     } catch (e) {
       content = m.text;
     }
@@ -1601,8 +1631,8 @@ async function saveToNote(item: Zotero.Item, question: string, answer: string) {
   note.parentID = parentID;
 
   // Format content
-  const qHtml = getMarkdown().render(normalizeMathDelimiters(question));
-  const aHtml = getMarkdown().render(normalizeMathDelimiters(answer));
+  const qHtml = renderMdForNote(question);
+  const aHtml = renderMdForNote(answer);
 
   note.setNote(`<h2>Chat History</h2>
 <p><strong>User:</strong></p>
