@@ -71,7 +71,8 @@ function getMarkdown() {
     md = new MarkdownIt({
       html: true,
       linkify: true,
-      typographer: true,
+      // false: smart quotes interact badly with **bold** next to "CJK quotes"; emphasis often fails to close.
+      typographer: false,
       breaks: true,
       xhtmlOut: true,
     });
@@ -1105,7 +1106,24 @@ function sanitizeMisusedDoubleDollarBlocks(src: string): string {
   });
 }
 
+/**
+ * CommonMark emphasis: spaces before closing `**` break strong; models often emit `**foo **` next to
+ * full-width parens. Also helps CJK-heavy lines without touching fenced code (no **…** inside ```).
+ */
+function normalizeMarkdownBoldMarkers(src: string): string {
+  let s = src;
+  // `** “foo”` — space after opening ** breaks the delimiter run in CommonMark.
+  s = s.replace(/\*\*\s+(?=[\u201C\u2018\u201A\u300C"'「『])/g, "**");
+  let prev = "";
+  for (let i = 0; i < 24 && prev !== s; i++) {
+    prev = s;
+    s = s.replace(/\*\*([^*]+?)\s+\*\*/g, "**$1**");
+  }
+  return s;
+}
+
 function normalizeMathDelimiters(src: string): string {
+  src = normalizeMarkdownBoldMarkers(src);
   // Fullwidth grave (some fonts / paste sources look like a backtick but won’t match `).
   src = src.replace(/\uFF40/g, "`");
   // Models often wrap `$...$` or `$$...$$` in backticks; Markdown then renders <code>, not KaTeX.
@@ -1116,6 +1134,15 @@ function normalizeMathDelimiters(src: string): string {
     src = src.replace(/`\s*(\$\$[\s\S]*?\$\$)\s*`/g, "$1");
     src = src.replace(/`\s*(\$[^`]*\$)\s*`/g, "$1");
   }
+  // `$\theta` or `$\phi` — model often omits the closing `$` before the closing backtick; Markdown
+  // then treats it as <code>, not math. Only fix when no whitespace inside (avoid `$ not code`).
+  src = src.replace(/`\s*(\$[^`]+?)\s*`/g, (full, inner) => {
+    const t = inner.trim();
+    if (!t.startsWith("$") || t === "$") return full;
+    if (t.endsWith("$")) return t;
+    if (/\s/.test(t.slice(1))) return full;
+    return `${t}$`;
+  });
   src = sanitizeMisusedDoubleDollarBlocks(src);
   // Only fenced blocks explicitly tagged latex/math/tex become display math. A plain ``` fence must
   // NOT match — `(?:latex|math|tex)?` would match anonymous fences and wrongly wrap body in $$.

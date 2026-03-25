@@ -144,7 +144,8 @@ function getMarkdown() {
         xhtmlOut: true, // Use '/' to close single tags (<br />)
         html: true,
         linkify: true,
-        typographer: true,
+        // false: smart quotes break **bold** when adjacent to CJK punctuation/quotes in markdown-it.
+        typographer: false,
         breaks: true,
         highlight: (str: string, lang: string) => {
           if (lang && hljs.getLanguage(lang)) {
