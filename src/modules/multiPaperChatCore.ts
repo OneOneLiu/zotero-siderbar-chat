@@ -1122,8 +1122,14 @@ function normalizeMarkdownBoldMarkers(src: string): string {
   return s;
 }
 
+/** ATX headings need a space after the # run; models often write `###标题` which markdown-it leaves as plain text. */
+function normalizeAtxHeadingSpace(src: string): string {
+  return src.replace(/^(\s{0,3})(#{1,6})([^\s#\r\n])/gm, "$1$2 $3");
+}
+
 function normalizeMathDelimiters(src: string): string {
   src = normalizeMarkdownBoldMarkers(src);
+  src = normalizeAtxHeadingSpace(src);
   // Fullwidth grave (some fonts / paste sources look like a backtick but won’t match `).
   src = src.replace(/\uFF40/g, "`");
   // Models often wrap `$...$` or `$$...$$` in backticks; Markdown then renders <code>, not KaTeX.
