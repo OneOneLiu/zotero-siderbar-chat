@@ -1,3 +1,4 @@
+import { createAbortController, fetchWithAbort } from "../utils/abortPolyfill";
 import MarkdownIt from "markdown-it";
 // @ts-ignore
 import tm from "markdown-it-texmath";
@@ -459,7 +460,7 @@ async function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
 /** Combines optional user cancel with per-request timeout; dispose() clears timers/listeners. */
 function mergeUserAndTimeout(user: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; dispose: () => void } {
-  const c = new AbortController();
+  const c = createAbortController();
   const t = setTimeout(() => c.abort(), timeoutMs);
   const onUserAbort = () => {
     clearTimeout(t);
@@ -489,7 +490,7 @@ async function fetchWithRetry(url: string, opts: RequestInit, retries = MAX_RETR
     }
     const { signal, dispose } = mergeUserAndTimeout(userSignal, TIMEOUT_MS);
     try {
-      const res = await fetch(url, { ...opts, signal });
+      const res = await fetchWithAbort(url, { ...opts, signal });
       dispose();
       if (res.status === 429 || res.status >= 500) {
         if (attempt < retries) {
@@ -2645,7 +2646,7 @@ async function handleSend() {
 
   const btn = $("btn-send") as HTMLButtonElement;
   busy = true;
-  analysisAbortController = new AbortController();
+  analysisAbortController = createAbortController();
   const { signal } = analysisAbortController;
   btn.disabled = false;
   btn.textContent = "Stop";

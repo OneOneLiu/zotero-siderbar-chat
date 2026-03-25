@@ -1,3 +1,4 @@
+import { createAbortController, fetchWithAbort } from "../utils/abortPolyfill";
 import MarkdownIt from "markdown-it";
 // @ts-ignore
 import tm from "markdown-it-texmath";
@@ -1318,7 +1319,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
       sendBtn.disabled = false;
 
       if (busy) {
-        readerStreamAbort = new AbortController();
+        readerStreamAbort = createAbortController();
         sendBtn.textContent = "Stop";
         sendBtn.classList.add("gemini-chat-stop-mode");
         sendBtn.title = "Stop generation";
@@ -1581,6 +1582,8 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
         const modelMsg = sessions[sessions.length - 1];
 
         let accumulatedText = "";
+        let lastSidebarRender = 0;
+        const SIDEBAR_RENDER_MS = 120;
 
         for await (const chunk of callAIStream(settings, contents, { signal: readerStreamAbort?.signal })) {
           if (typeof chunk === "string") {
@@ -1590,7 +1593,11 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
             // The provider already returns normalized usage data
             modelMsg.usage = chunk.usage;
           }
-          renderMessages();
+          const now = Date.now();
+          if (now - lastSidebarRender >= SIDEBAR_RENDER_MS) {
+            lastSidebarRender = now;
+            renderMessages();
+          }
         }
 
         const duration = Date.now() - startTime;
@@ -2049,21 +2056,17 @@ export async function callAINonStream(
     headers["Authorization"] = `Bearer ${settings.apiKey}`;
   }
 
-  let signal: AbortSignal | undefined;
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  if (typeof AbortController !== "undefined") {
-    const controller = new AbortController();
-    timeoutId = setTimeout(() => controller.abort(), 180000);
-    signal = controller.signal;
-  }
+  const controller = createAbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 180000);
+  const signal = controller.signal;
 
-  const res = await fetch(endpoint, {
+  const res = await fetchWithAbort(endpoint, {
     method: "POST",
     headers,
     body: JSON.stringify(payload),
     signal,
   });
-  if (timeoutId !== undefined) clearTimeout(timeoutId);
+  clearTimeout(timeoutId);
 
   if (!res.ok) {
     const text = await res.text();
@@ -2267,7 +2270,7 @@ async function buildReaderSidebarRagContextParts(
 }
 
 function mergeReaderStreamSignals(userSignal: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; dispose: () => void } {
-  const c = new AbortController();
+  const c = createAbortController();
   const t = setTimeout(() => c.abort(), timeoutMs);
   const onUserAbort = () => {
     clearTimeout(t);
@@ -2308,7 +2311,9 @@ export async function* callAIStream(
   const payload = provider.formatRequest(contents, settings.model);
 
   const userSignal = opts?.signal;
-  const { signal, dispose } = mergeReaderStreamSignals(userSignal, 120000);
+  // Covers fetch + full body read. Do NOT dispose after fetch alone — that cleared the timer and
+  // left reader.read() with no deadline, so stalled streams hung forever with no error.
+  const { signal, dispose } = mergeReaderStreamSignals(userSignal, 600000);
 
   // Prepare headers
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -2320,122 +2325,130 @@ export async function* callAIStream(
 
   let res: Response;
   try {
-    res = await fetch(endpoint, {
+    res = await fetchWithAbort(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(payload),
       signal,
     });
-  } finally {
-    dispose();
-  }
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`${res.status} ${res.statusText}: ${text}`);
-  }
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`${res.status} ${res.statusText}: ${text}`);
+    }
 
-  if (!res.body) throw new Error("No response body");
+    if (!res.body) throw new Error("No response body");
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder("utf-8");
-  let buffer = "";
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
 
-  try {
-    while (true) {
-      if (userSignal?.aborted) {
-        try { await reader.cancel(); } catch { /* ignore */ }
-        throw new DOMException("Aborted", "AbortError");
+    try {
+      while (true) {
+        if (signal.aborted) {
+          try { await reader.cancel(); } catch { /* ignore */ }
+          throw new DOMException("Aborted", "AbortError");
+        }
+        if (userSignal?.aborted) {
+          try { await reader.cancel(); } catch { /* ignore */ }
+          throw new DOMException("Aborted", "AbortError");
+        }
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        // Gemini returns a JSON array: [ { ... }, { ... } ]
+        // But acts as a stream. We simply regex for "text" fields to be safe and simple.
+        // A more robust way is to finding matching brackets, but regex is surprisingly effective for this specific API shape 
+        // if we are just extracting the text parts.
+        // However, to be cleaner, let's try to parse complete JSON objects from the buffer.
+        // The stream format is essentially:
+        // [
+        // { ... },
+        // { ... }
+        // ]
+
+        // We'll treat the buffer as text and extract content using regex to avoid complex JSON stream parsing logic
+        // Regex to find: "text": "..." 
+        // Note: This is a simplification. For production usage, a real JSON stream parser is better.
+        // But given we want "minimal new problems", regex on the JSON string is often safer than writing a fragile parser.
+
+        // Actually, let's try a split approach. The API usually sends one JSON object per 'data' chunk or comma separated.
+        // Let's match valid JSON objects.
+
+        let scannerIdx = 0;
+        while (scannerIdx < buffer.length) {
+          const start = buffer.indexOf('{', scannerIdx);
+          if (start === -1) break;
+
+          // Minimal bracket balancing
+          let depth = 0;
+          let end = -1;
+          let inString = false;
+          let escape = false;
+
+          for (let i = start; i < buffer.length; i++) {
+            const char = buffer[i];
+            if (escape) {
+              escape = false;
+              continue;
+            }
+            if (char === '\\') {
+              escape = true;
+              continue;
+            }
+            if (char === '"') {
+              inString = !inString;
+              continue;
+            }
+            if (!inString) {
+              if (char === '{') depth++;
+              if (char === '}') {
+                depth--;
+                if (depth === 0) {
+                  end = i;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (end !== -1) {
+            const jsonStr = buffer.substring(start, end + 1);
+            try {
+              const parsed = JSON.parse(jsonStr);
+              const parsedChunk = provider.parseStreamChunk(parsed);
+              if (parsedChunk) {
+                if (parsedChunk.type === "text" && parsedChunk.text) {
+                  yield parsedChunk.text;
+                } else if (parsedChunk.type === "usage" && parsedChunk.usage) {
+                  yield { usage: parsedChunk.usage };
+                }
+              }
+            } catch (e) {
+              // ignore parse error
+            }
+
+            // Move buffer forward
+            buffer = buffer.substring(end + 1);
+            scannerIdx = 0; // Reset scanner since buffer shifted
+          } else {
+            // Not enough data for a full object, wait for next chunk
+            scannerIdx = start + 1; // avoid infinite loop if malformed
+            break;
+          }
+        }
       }
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      const chunk = decoder.decode(value, { stream: true });
-      buffer += chunk;
-
-      // Gemini returns a JSON array: [ { ... }, { ... } ]
-      // But acts as a stream. We simply regex for "text" fields to be safe and simple.
-      // A more robust way is to finding matching brackets, but regex is surprisingly effective for this specific API shape 
-      // if we are just extracting the text parts.
-      // However, to be cleaner, let's try to parse complete JSON objects from the buffer.
-      // The stream format is essentially:
-      // [
-      // { ... },
-      // { ... }
-      // ]
-
-      // We'll treat the buffer as text and extract content using regex to avoid complex JSON stream parsing logic
-      // Regex to find: "text": "..." 
-      // Note: This is a simplification. For production usage, a real JSON stream parser is better.
-      // But given we want "minimal new problems", regex on the JSON string is often safer than writing a fragile parser.
-
-      // Actually, let's try a split approach. The API usually sends one JSON object per 'data' chunk or comma separated.
-      // Let's match valid JSON objects.
-
-      let scannerIdx = 0;
-      while (scannerIdx < buffer.length) {
-        const start = buffer.indexOf('{', scannerIdx);
-        if (start === -1) break;
-
-        // Minimal bracket balancing
-        let depth = 0;
-        let end = -1;
-        let inString = false;
-        let escape = false;
-
-        for (let i = start; i < buffer.length; i++) {
-          const char = buffer[i];
-          if (escape) {
-            escape = false;
-            continue;
-          }
-          if (char === '\\') {
-            escape = true;
-            continue;
-          }
-          if (char === '"') {
-            inString = !inString;
-            continue;
-          }
-          if (!inString) {
-            if (char === '{') depth++;
-            if (char === '}') {
-              depth--;
-              if (depth === 0) {
-                end = i;
-                break;
-              }
-            }
-          }
-        }
-
-        if (end !== -1) {
-          const jsonStr = buffer.substring(start, end + 1);
-          try {
-            const parsed = JSON.parse(jsonStr);
-            const parsedChunk = provider.parseStreamChunk(parsed);
-            if (parsedChunk) {
-              if (parsedChunk.type === "text" && parsedChunk.text) {
-                yield parsedChunk.text;
-              } else if (parsedChunk.type === "usage" && parsedChunk.usage) {
-                yield { usage: parsedChunk.usage };
-              }
-            }
-          } catch (e) {
-            // ignore parse error
-          }
-
-          // Move buffer forward
-          buffer = buffer.substring(end + 1);
-          scannerIdx = 0; // Reset scanner since buffer shifted
-        } else {
-          // Not enough data for a full object, wait for next chunk
-          scannerIdx = start + 1; // avoid infinite loop if malformed
-          break;
-        }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        /* ignore */
       }
     }
   } finally {
-    reader.releaseLock();
+    dispose();
   }
 }
