@@ -22,7 +22,7 @@ import {
   type RagIndex,
 } from "./ragIndex";
 import { searchChunksBalanced } from "./ragSearch";
-import { initMathCopyListener } from "./multiPaperChatCore";
+import { copyMarkdownToClipboard, initMathCopyListener, normalizeMarkdownForExport } from "./multiPaperChatCore";
 
 Zotero.debug("[GeminiChat] Loading readerPane module...");
 
@@ -136,16 +136,6 @@ async function renderMermaidInElement(root: HTMLElement) {
   }
 }
 
-function normalizeMathDelimiters(src: string): string {
-  // Models often wrap `$...$` or `$$...$$` in backticks; Markdown then renders <code>, not KaTeX.
-  src = src.replace(/`(\$\$[\s\S]*?\$\$)`/g, "$1");
-  src = src.replace(/`(\$[^`]*\$)`/g, "$1");
-  src = src.replace(/```(?:latex|math|tex)?\s*\n([\s\S]*?)```/g, (_m, p1) => `$$${p1.trim()}$$`);
-  src = src.replace(/\\\[([\s\S]*?)\\\]/g, (_m, p1) => `$$${p1}$$`);
-  src = src.replace(/\\\((.+?)\\\)/g, (_m, p1) => `$${p1}$`);
-  return src;
-}
-
 function getMarkdown() {
   if (!md) {
     try {
@@ -237,7 +227,7 @@ function getMarkdownForNote() {
 
 
 function renderMdForNote(text: string): string {
-  try { return getMarkdownForNote().render(normalizeMathDelimiters(text)); } catch (_) { return escapeHtml(text); }
+  try { return getMarkdownForNote().render(normalizeMarkdownForExport(text)); } catch (_) { return escapeHtml(text); }
 }
 
 type RenderOptions = {
@@ -527,6 +517,35 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
             background: var(--gemini-bg-bubble-model);
             color: var(--gemini-text-primary);
             border-bottom-left-radius: 4px;
+            display: flex;
+            flex-direction: column;
+          }
+          .rc-bubble-body {
+            min-width: 0;
+          }
+          .gemini-chat-bubble.model .rc-copy-md-footer,
+          .gemini-chat-copy-md-footer {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--gemini-border-light);
+            display: flex;
+            justify-content: flex-end;
+            flex-shrink: 0;
+          }
+          .gemini-chat-bubble.model .rc-copy-md-btn,
+          .gemini-chat-copy-md-btn {
+            font-size: 11px;
+            padding: 4px 10px;
+            border-radius: 6px;
+            border: 1px solid var(--gemini-border-light);
+            background: #fff;
+            cursor: pointer;
+            color: #007AFF;
+          }
+          .gemini-chat-bubble.model .rc-copy-md-btn:hover,
+          .gemini-chat-copy-md-btn:hover {
+            background: rgba(0, 122, 255, 0.08);
+            border-color: #007AFF;
           }
           .gemini-chat-bubble.system {
             align-self: center;
@@ -1210,7 +1229,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
           const content = createElement("div");
           // Initialize md if needed
           const mdInstance = getMarkdown();
-          const normalized = normalizeMathDelimiters(normalizeMermaidBlock(m.text));
+          const normalized = normalizeMarkdownForExport(normalizeMermaidBlock(m.text));
           content.innerHTML = mdInstance.render(normalized);
           void renderMermaidInElement(content);
           bubble.appendChild(content);
@@ -1243,6 +1262,27 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
 
           meta.textContent = metaText;
           bubble.appendChild(meta);
+        }
+
+        if (m.role === "model" && m.text.trim()) {
+          const copyFooter = createElement("div");
+          copyFooter.className = "gemini-chat-copy-md-footer";
+          const copyBtn = createElement("button") as HTMLButtonElement;
+          copyBtn.type = "button";
+          copyBtn.className = "gemini-chat-copy-md-btn";
+          copyBtn.textContent = "Copy Markdown";
+          copyBtn.title = "Copy this reply as Markdown (for other editors)";
+          copyBtn.onclick = async (e) => {
+            e.stopPropagation();
+            try {
+              await copyMarkdownToClipboard(m.text);
+              const orig = copyBtn.textContent;
+              copyBtn.textContent = "Copied";
+              setTimeout(() => { copyBtn.textContent = orig || "Copy Markdown"; }, 1500);
+            } catch (_) {}
+          };
+          copyFooter.appendChild(copyBtn);
+          bubble.appendChild(copyFooter);
         }
 
         messageList.appendChild(bubble);

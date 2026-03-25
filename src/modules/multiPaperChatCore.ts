@@ -1018,25 +1018,131 @@ function setChatInnerHTML(el: HTMLElement, html: string) {
   el.textContent = html.replace(/<[^>]*>/g, " ");
 }
 
-function addMessageBubble(role: "user" | "model" | "system", html: string): HTMLElement {
+function getModelBubbleBody(el: HTMLElement): HTMLElement {
+  const b = el.querySelector(".rc-bubble-body");
+  return (b as HTMLElement) || el;
+}
+
+function setModelBubbleMarkdownSource(el: HTMLElement, md: string) {
+  el.dataset.rcCopyMd = md;
+  const footer = el.querySelector(".rc-copy-md-footer") as HTMLElement | null;
+  if (footer) footer.style.display = md.trim() ? "" : "none";
+}
+
+function resolveStreamPaintTarget(el: HTMLElement): HTMLElement {
+  if (el.classList.contains("msg") || el.classList.contains("gemini-chat-bubble")) {
+    const body = el.querySelector(".rc-bubble-body") as HTMLElement | null;
+    if (body) return body;
+  }
+  return el;
+}
+
+function addMessageBubble(role: "user" | "model" | "system", html: string, markdownForCopy?: string): HTMLElement {
   const host = $("chat-messages");
   const doc = host.ownerDocument || getRootDocument();
   if (!doc) throw new Error("No DOM document for chat bubbles");
   const el = doc.createElement("div");
   el.className = analysisMessagesHost ? `gemini-chat-bubble ${role}` : `msg ${role}`;
-  setChatInnerHTML(el, html);
+
+  if (role === "model") {
+    el.dataset.rcCopyMd = markdownForCopy ?? "";
+    const body = doc.createElement("div");
+    body.className = "rc-bubble-body";
+    setChatInnerHTML(body, html);
+    el.appendChild(body);
+    const footer = doc.createElement("div");
+    footer.className = "rc-copy-md-footer";
+    footer.style.display = (markdownForCopy ?? "").trim() ? "" : "none";
+    const btn = doc.createElement("button");
+    btn.type = "button";
+    btn.className = "rc-copy-md-btn";
+    btn.textContent = "Copy Markdown";
+    btn.title = "Copy this reply as Markdown (for other editors)";
+    btn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const md = el.dataset.rcCopyMd || "";
+      if (!md.trim()) return;
+      void copyMarkdownToClipboard(md).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = "Copied";
+        setTimeout(() => { btn.textContent = orig || "Copy Markdown"; }, 1500);
+      }).catch(() => {});
+    };
+    footer.appendChild(btn);
+    el.appendChild(footer);
+  } else {
+    setChatInnerHTML(el, html);
+  }
   host.appendChild(el);
   return el;
 }
 
+/**
+ * Some model outputs use $$...$$ for flowcharts / Chinese explanations (not LaTeX). texmath then
+ * treats them as display math and KaTeX breaks. Turn those into a plain text code fence instead.
+ */
+function sanitizeMisusedDoubleDollarBlocks(src: string): string {
+  return src.replace(/\$\$([\s\S]*?)\$\$/g, (full, inner) => {
+    const t = inner.trim();
+    if (!t) return full;
+    // Real LaTeX almost always contains \command
+    if (/\\[a-zA-Z]+/.test(t)) return full;
+
+    const lines = t.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    const lineCount = lines.length;
+    const hasArrow = /[↓↑→←⇒⇔┌─┐└┘│╱╲]/.test(t);
+    const cjkCount = (t.match(/[\u4e00-\u9fff]/g) || []).length;
+    const longCjk = cjkCount >= 8 && cjkCount / Math.max(t.length, 1) > 0.12;
+
+    const looksLikeFlowchart =
+      (lineCount >= 2 && (hasArrow || longCjk)) || (hasArrow && cjkCount >= 4);
+
+    if (!looksLikeFlowchart) return full;
+
+    const body = inner.replace(/^\s*\n+|\n+\s*$/g, "");
+    return "\n```text\n" + body + "\n```\n";
+  });
+}
+
 function normalizeMathDelimiters(src: string): string {
+  // Fullwidth grave (some fonts / paste sources look like a backtick but won’t match `).
+  src = src.replace(/\uFF40/g, "`");
   // Models often wrap `$...$` or `$$...$$` in backticks; Markdown then renders <code>, not KaTeX.
-  src = src.replace(/`(\$\$[\s\S]*?\$\$)`/g, "$1");
-  src = src.replace(/`(\$[^`]*\$)`/g, "$1");
-  src = src.replace(/```(?:latex|math|tex)?\s*\n([\s\S]*?)```/g, (_m, p1) => `$$${p1.trim()}$$`);
+  let prev = "";
+  for (let i = 0; i < 8 && prev !== src; i++) {
+    prev = src;
+    // Allow stray spaces next to backticks (some models insert spaces before/after `$`).
+    src = src.replace(/`\s*(\$\$[\s\S]*?\$\$)\s*`/g, "$1");
+    src = src.replace(/`\s*(\$[^`]*\$)\s*`/g, "$1");
+  }
+  src = sanitizeMisusedDoubleDollarBlocks(src);
+  // Only fenced blocks explicitly tagged latex/math/tex become display math. A plain ``` fence must
+  // NOT match — `(?:latex|math|tex)?` would match anonymous fences and wrongly wrap body in $$.
+  src = src.replace(/```(latex|math|tex)\s*\n([\s\S]*?)```/gi, (_m, _lang, body) => `$$${body.trim()}$$`);
   src = src.replace(/\\\[([\s\S]*?)\\\]/g, (_m, p1) => `$$${p1}$$`);
   src = src.replace(/\\\((.+?)\\\)/g, (_m, p1) => `$${p1}$`);
   return src;
+}
+
+/** Same normalization as rendering — use when exporting Markdown so pasted text matches on-screen math/code behavior. */
+export function normalizeMarkdownForExport(src: string): string {
+  return normalizeMathDelimiters(src);
+}
+
+/** Copy Markdown to the clipboard after normalizing (unwrap math from backticks, etc.). */
+export async function copyMarkdownToClipboard(text: string): Promise<void> {
+  const t = normalizeMathDelimiters(text ?? "");
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(t);
+    return;
+  }
+  if (typeof Components !== "undefined") {
+    const cb = Components.classes["@mozilla.org/widget/clipboardhelper;1"].getService(Components.interfaces.nsIClipboardHelper);
+    cb.copyString(t);
+    return;
+  }
+  throw new Error("Clipboard unavailable");
 }
 
 function renderMd(text: string): string {
@@ -1049,7 +1155,8 @@ const STREAMING_MD_UI_MS = 160;
 /**
  * Renders stream chunks into one element with throttled renderMd — avoids re-parsing huge static prefixes on every token (e.g. phase-4 synthesis after large extraction blocks).
  */
-async function pumpStreamToMarkdownElement(streamEl: HTMLElement, stream: AsyncIterable<string>): Promise<string> {
+async function pumpStreamToMarkdownElement(streamTarget: HTMLElement, stream: AsyncIterable<string>): Promise<string> {
+  const streamEl = resolveStreamPaintTarget(streamTarget);
   let text = "";
   let lastPaint = 0;
   try {
@@ -1063,6 +1170,9 @@ async function pumpStreamToMarkdownElement(streamEl: HTMLElement, stream: AsyncI
     }
   } finally {
     setChatInnerHTML(streamEl, renderMd(text));
+  }
+  if (streamTarget !== streamEl) {
+    setModelBubbleMarkdownSource(streamTarget, text);
   }
   return text;
 }
@@ -1207,10 +1317,9 @@ export async function runInitialAnalysis(
 
   // Show question understanding as a collapsible section
   if (C.questionUnderstandingDoc) {
-    const quDetailBubble = addMessageBubble("model", "");
-    setChatInnerHTML(quDetailBubble, renderMd(
-      `<details><summary>🧠 Question Understanding (click to expand)</summary>\n\n${C.questionUnderstandingDoc}\n\n</details>`
-    ));
+    const quMd =
+      `<details><summary>🧠 Question Understanding (click to expand)</summary>\n\n${C.questionUnderstandingDoc}\n\n</details>`;
+    addMessageBubble("model", renderMd(quMd), quMd);
   }
 
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -1344,14 +1453,15 @@ export async function runInitialAnalysis(
   const modelBubble = addMessageBubble("model", "");
   const bubbleDoc = modelBubble.ownerDocument || getRootDocument();
   if (!bubbleDoc) throw new Error("No document for synthesis bubble");
-  modelBubble.textContent = "";
+  const synthBodyEl = getModelBubbleBody(modelBubble);
+  synthBodyEl.textContent = "";
   const prefixEl = bubbleDoc.createElement("div");
   prefixEl.className = "rc-synth-prefix";
   setChatInnerHTML(prefixEl, renderMd(staticPrefixMd));
   const streamEl = bubbleDoc.createElement("div");
   streamEl.className = "rc-synth-stream";
-  modelBubble.appendChild(prefixEl);
-  modelBubble.appendChild(streamEl);
+  synthBodyEl.appendChild(prefixEl);
+  synthBodyEl.appendChild(streamEl);
 
   let synthBody = "";
   let lastSynthPaint = 0;
@@ -1371,6 +1481,7 @@ export async function runInitialAnalysis(
   setChatInnerHTML(streamEl, renderMd(synthBody));
 
   const fullMd = staticPrefixMd + synthBody;
+  setModelBubbleMarkdownSource(modelBubble, fullMd);
   C.chatHistory.push({ role: "model", text: fullMd });
 
   await saveAnalysisNote();
@@ -2420,8 +2531,7 @@ ${MATH_FORMAT_INSTRUCTION}`;
     toolBubble.remove();
   }
 
-  const modelBubble = addMessageBubble("model", "");
-  setChatInnerHTML(modelBubble, renderMd(finalText));
+  const modelBubble = addMessageBubble("model", renderMd(finalText), finalText);
 
   C.chatHistory.push({ role: "user", text: userPrompt });
   C.chatHistory.push({ role: "model", text: finalText });
@@ -2711,7 +2821,7 @@ async function restoreSession(session: SessionData) {
     if (msg.role === "user") {
       addMessageBubble("user", esc(msg.text));
     } else if (msg.role === "model") {
-      addMessageBubble("model", renderMd(msg.text));
+      addMessageBubble("model", renderMd(msg.text), msg.text);
     } else {
       addMessageBubble("system", esc(msg.text));
     }
