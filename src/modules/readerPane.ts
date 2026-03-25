@@ -137,6 +137,9 @@ async function renderMermaidInElement(root: HTMLElement) {
 }
 
 function normalizeMathDelimiters(src: string): string {
+  // Models often wrap `$...$` or `$$...$$` in backticks; Markdown then renders <code>, not KaTeX.
+  src = src.replace(/`(\$\$[\s\S]*?\$\$)`/g, "$1");
+  src = src.replace(/`(\$[^`]*\$)`/g, "$1");
   src = src.replace(/```(?:latex|math|tex)?\s*\n([\s\S]*?)```/g, (_m, p1) => `$$${p1.trim()}$$`);
   src = src.replace(/\\\[([\s\S]*?)\\\]/g, (_m, p1) => `$$${p1}$$`);
   src = src.replace(/\\\((.+?)\\\)/g, (_m, p1) => `$${p1}$`);

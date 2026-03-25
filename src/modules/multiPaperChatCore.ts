@@ -1030,6 +1030,9 @@ function addMessageBubble(role: "user" | "model" | "system", html: string): HTML
 }
 
 function normalizeMathDelimiters(src: string): string {
+  // Models often wrap `$...$` or `$$...$$` in backticks; Markdown then renders <code>, not KaTeX.
+  src = src.replace(/`(\$\$[\s\S]*?\$\$)`/g, "$1");
+  src = src.replace(/`(\$[^`]*\$)`/g, "$1");
   src = src.replace(/```(?:latex|math|tex)?\s*\n([\s\S]*?)```/g, (_m, p1) => `$$${p1.trim()}$$`);
   src = src.replace(/\\\[([\s\S]*?)\\\]/g, (_m, p1) => `$$${p1}$$`);
   src = src.replace(/\\\((.+?)\\\)/g, (_m, p1) => `$${p1}$`);
@@ -1124,7 +1127,7 @@ function renderMdForNote(text: string): string {
 
 export function esc(t: string) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
-const MATH_FORMAT_INSTRUCTION = "Formatting rule: When writing mathematical formulas, always use $...$ for inline math and $$...$$ (on its own line) for display math. Never wrap formulas in code blocks (backticks). This is critical for correct rendering.";
+const MATH_FORMAT_INSTRUCTION = "Formatting rule: When writing mathematical formulas, always use $...$ for inline math and $$...$$ (on its own line) for display math. Never wrap formulas in inline backticks (`) or fenced code blocks — that prevents rendering. This is critical for correct rendering.";
 
 // ---------- First-message: full analysis pipeline ----------
 
