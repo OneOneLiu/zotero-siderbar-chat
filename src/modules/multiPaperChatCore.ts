@@ -456,22 +456,61 @@ const MAX_RETRIES = 2;
 
 async function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
-async function fetchWithRetry(url: string, opts: RequestInit, retries = MAX_RETRIES): Promise<Response> {
+/** Combines optional user cancel with per-request timeout; dispose() clears timers/listeners. */
+function mergeUserAndTimeout(user: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; dispose: () => void } {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), timeoutMs);
+  const onUserAbort = () => {
+    clearTimeout(t);
+    c.abort();
+  };
+  if (user) {
+    if (user.aborted) {
+      clearTimeout(t);
+      c.abort();
+    } else {
+      user.addEventListener("abort", onUserAbort, { once: true });
+    }
+  }
+  return {
+    signal: c.signal,
+    dispose: () => {
+      clearTimeout(t);
+      if (user && !user.aborted) user.removeEventListener("abort", onUserAbort);
+    },
+  };
+}
+
+async function fetchWithRetry(url: string, opts: RequestInit, retries = MAX_RETRIES, userSignal?: AbortSignal): Promise<Response> {
   for (let attempt = 0; attempt <= retries; attempt++) {
+    if (userSignal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+    const { signal, dispose } = mergeUserAndTimeout(userSignal, TIMEOUT_MS);
     try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-      const res = await fetch(url, { ...opts, signal: ctrl.signal });
-      clearTimeout(timer);
+      const res = await fetch(url, { ...opts, signal });
+      dispose();
       if (res.status === 429 || res.status >= 500) {
         if (attempt < retries) {
+          if (userSignal?.aborted) throw new DOMException("Aborted", "AbortError");
           await delay(Math.min(2000 * Math.pow(2, attempt), 15000));
           continue;
         }
       }
       return res;
     } catch (e: any) {
-      if (attempt < retries && (e?.name === "AbortError" || /network/i.test(e?.message || ""))) {
+      dispose();
+      if (userSignal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+      if (e?.name === "AbortError") {
+        if (attempt < retries) {
+          await delay(Math.min(3000 * Math.pow(2, attempt), 20000));
+          continue;
+        }
+        throw e;
+      }
+      if (attempt < retries && /network/i.test(e?.message || "")) {
         await delay(Math.min(3000 * Math.pow(2, attempt), 20000));
         continue;
       }
@@ -481,8 +520,18 @@ async function fetchWithRetry(url: string, opts: RequestInit, retries = MAX_RETR
   throw new Error("Max retries exceeded");
 }
 
-async function callAI(s: ReturnType<typeof getFullAnalysisSettings>, contents: any[], modelOverride?: string): Promise<string> {
-  const res = await fetchWithRetry(buildEndpoint(s, false, modelOverride), { method: "POST", headers: buildHeaders(s), body: JSON.stringify(formatPayload(s, contents, false, modelOverride)) });
+async function callAI(
+  s: ReturnType<typeof getFullAnalysisSettings>,
+  contents: any[],
+  modelOverride?: string,
+  userSignal?: AbortSignal,
+): Promise<string> {
+  const res = await fetchWithRetry(
+    buildEndpoint(s, false, modelOverride),
+    { method: "POST", headers: buildHeaders(s), body: JSON.stringify(formatPayload(s, contents, false, modelOverride)) },
+    MAX_RETRIES,
+    userSignal,
+  );
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   const j: any = await res.json();
   if (s.provider === "gemini") {
@@ -500,13 +549,27 @@ async function callAI(s: ReturnType<typeof getFullAnalysisSettings>, contents: a
   throw new Error(`Unexpected response: ${JSON.stringify(j)}`);
 }
 
-async function* callAIStream(s: ReturnType<typeof getFullAnalysisSettings>, contents: any[], modelOverride?: string): AsyncGenerator<string> {
-  const res = await fetchWithRetry(buildEndpoint(s, true, modelOverride), { method: "POST", headers: buildHeaders(s), body: JSON.stringify(formatPayload(s, contents, true, modelOverride)) });
+async function* callAIStream(
+  s: ReturnType<typeof getFullAnalysisSettings>,
+  contents: any[],
+  modelOverride?: string,
+  userSignal?: AbortSignal,
+): AsyncGenerator<string> {
+  const res = await fetchWithRetry(
+    buildEndpoint(s, true, modelOverride),
+    { method: "POST", headers: buildHeaders(s), body: JSON.stringify(formatPayload(s, contents, true, modelOverride)) },
+    MAX_RETRIES,
+    userSignal,
+  );
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   if (!res.body) throw new Error("No body");
   const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
   try {
     while (true) {
+      if (userSignal?.aborted) {
+        try { await reader.cancel(); } catch { /* ignore */ }
+        throw new DOMException("Aborted", "AbortError");
+      }
       const { done, value } = await reader.read(); if (done) break;
       buf += dec.decode(value, { stream: true });
       let si = 0;
@@ -1054,7 +1117,12 @@ const MATH_FORMAT_INSTRUCTION = "Formatting rule: When writing mathematical form
 
 // ---------- First-message: full analysis pipeline ----------
 
-export async function runInitialAnalysis(userPrompt: string, settings: ReturnType<typeof getFullAnalysisSettings>, isRerun = false) {
+export async function runInitialAnalysis(
+  userPrompt: string,
+  settings: ReturnType<typeof getFullAnalysisSettings>,
+  isRerun = false,
+  signal?: AbortSignal,
+) {
   const allPdfs: { pdfItem: any; title: string }[] = [];
   for (const p of C.papers) {
     const z = Zotero.Items.get(p.id);
@@ -1071,6 +1139,7 @@ export async function runInitialAnalysis(userPrompt: string, settings: ReturnTyp
     await ensureRagDir();
     let ragBuilt = 0, ragCached = 0, ragFailed = 0;
     for (let i = 0; i < C.papers.length; i++) {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const p = C.papers[i];
       const alreadyReady = C.ragIndices.has(p.id) || await hasRagIndex(p.id);
       setChatInnerHTML(ragBubble, `<strong>🔍 Phase 1/4 — Preparing search index — ${i + 1}/${C.papers.length}</strong><br />` +
@@ -1089,10 +1158,13 @@ export async function runInitialAnalysis(userPrompt: string, settings: ReturnTyp
     if (ragBuilt > 0) ragParts.push(`${ragBuilt} newly built`);
     if (ragFailed > 0) ragParts.push(`${ragFailed} failed`);
     setChatInnerHTML(ragBubble, `✅ Phase 1/4 — Search index ready — ${ragParts.join(", ")}`);
-  } catch (e) {
+  } catch (e: any) {
+    if (e?.name === "AbortError") throw e;
     setChatInnerHTML(ragBubble, `⚠️ Phase 1/4 — Search index build error. Continuing without RAG support.`);
   }
   scrollToBottom();
+
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
   // === Phase 2: Question Understanding (AI call, with paper metadata) ===
   const quBubble = addMessageBubble("system", `<strong>🧠 Phase 2/4 — Analyzing research question...</strong>`);
@@ -1114,9 +1186,10 @@ export async function runInitialAnalysis(userPrompt: string, settings: ReturnTyp
       }
     }
     quContents.push({ role: "user" as const, parts: [{ text: quPrompt + "\n\n" + MATH_FORMAT_INSTRUCTION }] });
-    C.questionUnderstandingDoc = await callAI(settings, quContents);
+    C.questionUnderstandingDoc = await callAI(settings, quContents, undefined, signal);
     setChatInnerHTML(quBubble, `✅ Phase 2/4 — Question analysis complete.`);
   } catch (e: any) {
+    if (e?.name === "AbortError") throw e;
     C.questionUnderstandingDoc = "";
     setChatInnerHTML(quBubble, `⚠️ Phase 2/4 — Question analysis failed (${esc(e?.message || String(e))}). Continuing with direct extraction.`);
   }
@@ -1130,6 +1203,8 @@ export async function runInitialAnalysis(userPrompt: string, settings: ReturnTyp
     ));
     scrollToBottom();
   }
+
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
   // === Phase 3: Per-paper extraction (AI calls, with question understanding context) ===
   const perPaperPrompt = settings.extractionPrompt
@@ -1192,10 +1267,16 @@ export async function runInitialAnalysis(userPrompt: string, settings: ReturnTyp
     }
 
     try {
-      const r = await callAI(settings, [{ role: "user", parts: [...ctx, { text: perPaperPrompt + "\n\n" + MATH_FORMAT_INSTRUCTION }] }], settings.extractionModel);
+      const r = await callAI(
+        settings,
+        [{ role: "user", parts: [...ctx, { text: perPaperPrompt + "\n\n" + MATH_FORMAT_INSTRUCTION }] }],
+        settings.extractionModel,
+        signal,
+      );
       extractions[i] = `# Paper ${i + 1}: ${title}\n\n${r}`;
       pStatus[i] = "done";
     } catch (e: any) {
+      if (e?.name === "AbortError") throw e;
       extractions[i] = `# Paper ${i + 1}: ${title}\n\n*Failed: ${e?.message || e}*`;
       pStatus[i] = "failed";
     }
@@ -1207,10 +1288,12 @@ export async function runInitialAnalysis(userPrompt: string, settings: ReturnTyp
   for (let w = 0; w < CONCURRENCY; w++) {
     workers.push((async () => {
       while (queue.length > 0) {
+        if (signal?.aborted) break;
         const idx = queue.shift()!;
         try {
           await extractOne(idx);
         } catch (e: any) {
+          if (e?.name === "AbortError") throw e;
           extractions[idx] = `# Paper ${idx + 1}: ${allPdfs[idx].title}\n\n*Worker error: ${e?.message || e}*`;
           pStatus[idx] = "failed";
           updateProgress();
@@ -1220,6 +1303,8 @@ export async function runInitialAnalysis(userPrompt: string, settings: ReturnTyp
     })());
   }
   await Promise.all(workers);
+
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
   C.analysisDoc = extractions.join("\n\n---\n\n");
 
@@ -1253,12 +1338,13 @@ export async function runInitialAnalysis(userPrompt: string, settings: ReturnTyp
   const modelBubble = addMessageBubble("model", "");
 
   try {
-    for await (const chunk of callAIStream(settings, synthContents)) {
+    for await (const chunk of callAIStream(settings, synthContents, undefined, signal)) {
       fullMd += chunk;
       setChatInnerHTML(modelBubble, renderMd(fullMd));
       scrollToBottom();
     }
   } catch (synthErr: any) {
+    if (synthErr?.name === "AbortError") throw synthErr;
     fullMd += `\n\n---\n\n⚠️ Synthesis interrupted: ${synthErr?.message || synthErr}\n\nThe per-paper extractions above are still available. You can ask a follow-up question to retry the synthesis.`;
     setChatInnerHTML(modelBubble, renderMd(fullMd));
   }
@@ -2080,15 +2166,19 @@ async function runToolCallLoop(
   tools: ToolDef[],
   onToolCall?: (tc: ToolCall) => void,
   onToolResult?: (tc: ToolCall, result: string) => void,
+  userSignal?: AbortSignal,
 ): Promise<{ text: string; hitLimit: boolean }> {
   const rounds: { calls: ToolCall[]; results: string[] }[] = [];
   const maxRounds = settings.maxToolRounds;
 
   for (let r = 0; r < maxRounds; r++) {
+    if (userSignal?.aborted) throw new DOMException("Aborted", "AbortError");
     const payload = buildPayloadWithTools(settings, chatMsgs, userParts, rounds, tools);
     const res = await fetchWithRetry(
       buildEndpoint(settings, false),
       { method: "POST", headers: buildHeaders(settings), body: JSON.stringify(payload) },
+      MAX_RETRIES,
+      userSignal,
     );
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
     const parsed = parseToolResponse(settings, await res.json());
@@ -2097,6 +2187,7 @@ async function runToolCallLoop(
 
     const results: string[] = [];
     for (const tc of parsed.toolCalls) {
+      if (userSignal?.aborted) throw new DOMException("Aborted", "AbortError");
       if (onToolCall) onToolCall(tc);
       const result = await executeTool(tc.name, tc.args, settings);
       results.push(result);
@@ -2105,10 +2196,13 @@ async function runToolCallLoop(
     rounds.push({ calls: parsed.toolCalls, results });
   }
 
+  if (userSignal?.aborted) throw new DOMException("Aborted", "AbortError");
   const payload = buildPayloadWithTools(settings, chatMsgs, userParts, rounds, tools);
   const res = await fetchWithRetry(
     buildEndpoint(settings, false),
     { method: "POST", headers: buildHeaders(settings), body: JSON.stringify(payload) },
+    MAX_RETRIES,
+    userSignal,
   );
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   const json: any = await res.json();
@@ -2127,7 +2221,11 @@ function cleanToolLeakage(text: string): string {
 
 // ---------- Follow-up message ----------
 
-export async function handleFollowUp(userPrompt: string, settings: ReturnType<typeof getFullAnalysisSettings>) {
+export async function handleFollowUp(
+  userPrompt: string,
+  settings: ReturnType<typeof getFullAnalysisSettings>,
+  signal?: AbortSignal,
+) {
   const { parts: contextParts, ragInfo } = await buildContextParts(settings, userPrompt);
 
   if (ragInfo) {
@@ -2197,7 +2295,7 @@ ${MATH_FORMAT_INSTRUCTION}`;
     contents.push({ role: "user", parts: userParts });
     const modelBubble = addMessageBubble("model", "");
     let accum = "";
-    for await (const chunk of callAIStream(settings, contents)) {
+    for await (const chunk of callAIStream(settings, contents, undefined, signal)) {
       accum += chunk;
       setChatInnerHTML(modelBubble, renderMd(accum));
       scrollToBottom();
@@ -2280,10 +2378,15 @@ ${MATH_FORMAT_INSTRUCTION}`;
         currentToolHtml = "";
         renderToolBubble();
       },
+      signal,
     );
     finalText = result.text;
     hitLimit = result.hitLimit;
   } catch (e: any) {
+    if (e?.name === "AbortError") {
+      toolBubble.remove();
+      throw e;
+    }
     if (toolCount > 0) {
       currentToolHtml = `<span style="color:#ea4335;">❌ Error: ${esc(e?.message || String(e))}</span>`;
       renderToolBubble();
@@ -2318,9 +2421,10 @@ ${MATH_FORMAT_INSTRUCTION}`;
 
 let busy = false;
 let rerunRequested = false;
+let analysisAbortController: AbortController | null = null;
 
 /** Shared send pipeline (iframe + reader sidebar). */
-export async function processAnalysisUserMessage(userText: string): Promise<void> {
+export async function processAnalysisUserMessage(userText: string, signal?: AbortSignal): Promise<void> {
   let settings: ReturnType<typeof getFullAnalysisSettings>;
   try {
     ensureGlobals();
@@ -2347,20 +2451,23 @@ export async function processAnalysisUserMessage(userText: string): Promise<void
 
     if (C.papers.length > 0) {
       addMessageBubble("system", "🔄 Re-running full 4-step analysis pipeline with current papers...");
-      await runInitialAnalysis(userText, settings, true);
+      await runInitialAnalysis(userText, settings, true, signal);
     } else {
       addMessageBubble("system", "⚠️ No papers loaded. Cannot run full analysis pipeline.");
-      await handleFollowUp(userText, settings);
+      await handleFollowUp(userText, settings, signal);
     }
   } else if (C.chatHistory.length === 0 && !C.standaloneMode && C.papers.length > 0) {
-    await runInitialAnalysis(userText, settings);
+    await runInitialAnalysis(userText, settings, false, signal);
   } else {
-    await handleFollowUp(userText, settings);
+    await handleFollowUp(userText, settings, signal);
   }
 }
 
 async function handleSend() {
-  if (busy) return;
+  if (busy) {
+    analysisAbortController?.abort();
+    return;
+  }
   const input = $("chat-input") as HTMLTextAreaElement;
   const text = input.value.trim();
   if (!text) return;
@@ -2383,16 +2490,25 @@ async function handleSend() {
 
   const btn = $("btn-send") as HTMLButtonElement;
   busy = true;
-  btn.disabled = true;
-  btn.textContent = "...";
+  analysisAbortController = new AbortController();
+  const { signal } = analysisAbortController;
+  btn.disabled = false;
+  btn.textContent = "Stop";
+  btn.classList.add("btn-send-stop");
   input.disabled = true;
 
   try {
-    await processAnalysisUserMessage(text);
+    await processAnalysisUserMessage(text, signal);
   } catch (e: any) {
-    addMessageBubble("system", `❌ ${esc(e?.message || String(e))}`);
+    if (e?.name === "AbortError") {
+      addMessageBubble("system", "Generation stopped.");
+    } else {
+      addMessageBubble("system", `❌ ${esc(e?.message || String(e))}`);
+    }
   } finally {
     busy = false;
+    analysisAbortController = null;
+    btn.classList.remove("btn-send-stop");
     btn.disabled = false;
     btn.textContent = "Send";
     input.disabled = false;

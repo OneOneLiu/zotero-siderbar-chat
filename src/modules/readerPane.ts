@@ -679,6 +679,19 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
             cursor: default;
             background-color: transparent;
           }
+          .gemini-chat-send-btn.gemini-chat-stop-mode {
+            width: auto;
+            min-width: 32px;
+            padding: 0 8px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #c62828;
+            background: rgba(198, 40, 40, 0.08);
+          }
+          .gemini-chat-send-btn.gemini-chat-stop-mode:hover {
+            background: rgba(198, 40, 40, 0.15);
+          }
 
           .gemini-chat-spinner {
             width: 16px;
@@ -1259,17 +1272,20 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
 
     renderMessages(true);
 
+    let readerStreamAbort: AbortController | null = null;
+
     const setBusy = (busy: boolean) => {
       addon.setBusy(itemKey, busy);
-      sendBtn.disabled = busy;
+      sendBtn.disabled = false;
 
       if (busy) {
-        sendBtn.innerHTML = ""; // Clear emoji
-        const spinner = createElement("div");
-        spinner.className = "gemini-chat-spinner";
-        sendBtn.appendChild(spinner);
-        sendBtn.title = "Asking...";
+        readerStreamAbort = new AbortController();
+        sendBtn.textContent = "Stop";
+        sendBtn.classList.add("gemini-chat-stop-mode");
+        sendBtn.title = "Stop generation";
       } else {
+        readerStreamAbort = null;
+        sendBtn.classList.remove("gemini-chat-stop-mode");
         sendBtn.textContent = "➤";
         sendBtn.title = "Send";
       }
@@ -1420,8 +1436,12 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
     contextChips.ondrop = handleDrop;
 
     const handleSend = async (overrideText?: string) => {
+      if (addon.isBusy(itemKey)) {
+        readerStreamAbort?.abort();
+        return;
+      }
       const text = (typeof overrideText === "string" ? overrideText : input.value).trim();
-      if (!text || addon.isBusy(itemKey)) return;
+      if (!text) return;
 
       const contextItems = addon.getContextItems(itemKey);
       /** First user message in this session → full text of primary (reader) PDF; later turns use RAG for all. */
@@ -1524,7 +1544,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
 
         let accumulatedText = "";
 
-        for await (const chunk of callAIStream(settings, contents)) {
+        for await (const chunk of callAIStream(settings, contents, { signal: readerStreamAbort?.signal })) {
           if (typeof chunk === "string") {
             accumulatedText += chunk;
             modelMsg.text = accumulatedText;
@@ -1542,13 +1562,25 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
 
       } catch (e: any) {
         const sessions = addon.getSession(itemKey);
-        sessions.pop();
+        if (e?.name === "AbortError") {
+          const modelMsg = sessions[sessions.length - 1];
+          if (modelMsg?.role === "model" && !String(modelMsg.text || "").trim()) {
+            sessions.pop();
+          }
+          addon.pushMessage(itemKey, {
+            role: "system",
+            text: "Generation stopped.",
+            at: Date.now(),
+          });
+        } else {
+          sessions.pop();
 
-        addon.pushMessage(itemKey, {
-          role: "system",
-          text: `AI error: ${e?.message || e}`,
-          at: Date.now(),
-        });
+          addon.pushMessage(itemKey, {
+            role: "system",
+            text: `AI error: ${e?.message || e}`,
+            at: Date.now(),
+          });
+        }
       } finally {
         setBusy(false);
         renderMessages();
@@ -2196,7 +2228,35 @@ async function buildReaderSidebarRagContextParts(
   return buildReaderSidebarRagContextPartsForPdfs(settings, userQuery, pdfs);
 }
 
-export async function* callAIStream(settings: ReturnType<typeof getSettings>, contents: any[]): AsyncGenerator<string | { usage: any }, void, unknown> {
+function mergeReaderStreamSignals(userSignal: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; dispose: () => void } {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), timeoutMs);
+  const onUserAbort = () => {
+    clearTimeout(t);
+    c.abort();
+  };
+  if (userSignal) {
+    if (userSignal.aborted) {
+      clearTimeout(t);
+      c.abort();
+    } else {
+      userSignal.addEventListener("abort", onUserAbort, { once: true });
+    }
+  }
+  return {
+    signal: c.signal,
+    dispose: () => {
+      clearTimeout(t);
+      if (userSignal && !userSignal.aborted) userSignal.removeEventListener("abort", onUserAbort);
+    },
+  };
+}
+
+export async function* callAIStream(
+  settings: ReturnType<typeof getSettings>,
+  contents: any[],
+  opts?: { signal?: AbortSignal },
+): AsyncGenerator<string | { usage: any }, void, unknown> {
   const provider = getProvider(settings.provider);
 
   // Build endpoint using provider
@@ -2209,14 +2269,8 @@ export async function* callAIStream(settings: ReturnType<typeof getSettings>, co
   // Format request using provider
   const payload = provider.formatRequest(contents, settings.model);
 
-  let signal: AbortSignal | undefined;
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  if (typeof AbortController !== "undefined") {
-    const controller = new AbortController();
-    // Longer timeout for streaming
-    timeoutId = setTimeout(() => controller.abort(), 120000);
-    signal = controller.signal;
-  }
+  const userSignal = opts?.signal;
+  const { signal, dispose } = mergeReaderStreamSignals(userSignal, 120000);
 
   // Prepare headers
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -2226,12 +2280,17 @@ export async function* callAIStream(settings: ReturnType<typeof getSettings>, co
     headers["Authorization"] = `Bearer ${settings.apiKey}`;
   }
 
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-    signal,
-  });
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal,
+    });
+  } finally {
+    dispose();
+  }
 
   if (!res.ok) {
     const text = await res.text();
@@ -2246,6 +2305,10 @@ export async function* callAIStream(settings: ReturnType<typeof getSettings>, co
 
   try {
     while (true) {
+      if (userSignal?.aborted) {
+        try { await reader.cancel(); } catch { /* ignore */ }
+        throw new DOMException("Aborted", "AbortError");
+      }
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -2335,7 +2398,6 @@ export async function* callAIStream(settings: ReturnType<typeof getSettings>, co
       }
     }
   } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
     reader.releaseLock();
   }
 }
