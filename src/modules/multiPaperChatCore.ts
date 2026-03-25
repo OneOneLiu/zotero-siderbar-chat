@@ -984,18 +984,6 @@ function $(id: string): HTMLElement {
   throw new Error(`Missing required element #${id}`);
 }
 
-function isNearBottom(): boolean {
-  const el = analysisMessagesHost || getRootDocument()?.getElementById("chat-messages") || null;
-  if (!el) return true;
-  return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-}
-
-function scrollToBottom(force = false) {
-  if (!force && !isNearBottom()) return;
-  const el = analysisMessagesHost || getRootDocument()?.getElementById("chat-messages") || null;
-  if (el) el.scrollTop = el.scrollHeight;
-}
-
 /**
  * Zotero PDF reader sidebar uses an XML document; assigning HTML with void tags like `<br>`
  * to innerHTML throws "An invalid or illegal string was specified".
@@ -1038,7 +1026,6 @@ function addMessageBubble(role: "user" | "model" | "system", html: string): HTML
   el.className = analysisMessagesHost ? `gemini-chat-bubble ${role}` : `msg ${role}`;
   setChatInnerHTML(el, html);
   host.appendChild(el);
-  scrollToBottom(true);
   return el;
 }
 
@@ -1051,6 +1038,30 @@ function normalizeMathDelimiters(src: string): string {
 
 function renderMd(text: string): string {
   try { return getMarkdown().render(normalizeMathDelimiters(text)); } catch (_) { return esc(text); }
+}
+
+/** Max interval between full markdown re-paints while streaming (keeps UI responsive). */
+const STREAMING_MD_UI_MS = 160;
+
+/**
+ * Renders stream chunks into one element with throttled renderMd — avoids re-parsing huge static prefixes on every token (e.g. phase-4 synthesis after large extraction blocks).
+ */
+async function pumpStreamToMarkdownElement(streamEl: HTMLElement, stream: AsyncIterable<string>): Promise<string> {
+  let text = "";
+  let lastPaint = 0;
+  try {
+    for await (const chunk of stream) {
+      text += chunk;
+      const now = Date.now();
+      if (now - lastPaint >= STREAMING_MD_UI_MS) {
+        lastPaint = now;
+        setChatInnerHTML(streamEl, renderMd(text));
+      }
+    }
+  } finally {
+    setChatInnerHTML(streamEl, renderMd(text));
+  }
+  return text;
 }
 
 let mdForNote: any = null;
@@ -1144,7 +1155,6 @@ export async function runInitialAnalysis(
       const alreadyReady = C.ragIndices.has(p.id) || await hasRagIndex(p.id);
       setChatInnerHTML(ragBubble, `<strong>🔍 Phase 1/4 — Preparing search index — ${i + 1}/${C.papers.length}</strong><br />` +
         (alreadyReady ? `📦 Loading: ${esc(p.title)}` : `🔨 Building: ${esc(p.title)}`));
-      scrollToBottom();
       try {
         await ensureRagForPaper(p.id);
         if (alreadyReady) ragCached++; else ragBuilt++;
@@ -1162,13 +1172,11 @@ export async function runInitialAnalysis(
     if (e?.name === "AbortError") throw e;
     setChatInnerHTML(ragBubble, `⚠️ Phase 1/4 — Search index build error. Continuing without RAG support.`);
   }
-  scrollToBottom();
 
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
   // === Phase 2: Question Understanding (AI call, with paper metadata) ===
   const quBubble = addMessageBubble("system", `<strong>🧠 Phase 2/4 — Analyzing research question...</strong>`);
-  scrollToBottom();
 
   const paperMetaList = buildPaperInfoSection();
   const quPrompt = settings.questionUnderstandingPrompt
@@ -1193,7 +1201,6 @@ export async function runInitialAnalysis(
     C.questionUnderstandingDoc = "";
     setChatInnerHTML(quBubble, `⚠️ Phase 2/4 — Question analysis failed (${esc(e?.message || String(e))}). Continuing with direct extraction.`);
   }
-  scrollToBottom();
 
   // Show question understanding as a collapsible section
   if (C.questionUnderstandingDoc) {
@@ -1201,7 +1208,6 @@ export async function runInitialAnalysis(
     setChatInnerHTML(quDetailBubble, renderMd(
       `<details><summary>🧠 Question Understanding (click to expand)</summary>\n\n${C.questionUnderstandingDoc}\n\n</details>`
     ));
-    scrollToBottom();
   }
 
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -1242,7 +1248,6 @@ export async function runInitialAnalysis(
     }
 
     setChatInnerHTML(progressBubble, prog);
-    scrollToBottom();
   }
 
   async function extractOne(i: number) {
@@ -1313,7 +1318,6 @@ export async function runInitialAnalysis(
 
   // === Phase 4: Synthesis (with question understanding context) ===
   setChatInnerHTML(progressBubble, `✅ Phase 3/4 — All ${allPdfs.length} papers extracted. Starting synthesis...`);
-  scrollToBottom();
 
   const synthPrompt = settings.synthesisPrompt
     .replace(/\{question\}/g, userPrompt)
@@ -1331,25 +1335,39 @@ export async function runInitialAnalysis(
   }
   synthContents.push({ role: "user" as const, parts: [{ text: synthPrompt + "\n\n" + MATH_FORMAT_INSTRUCTION }] });
 
-  let fullMd = `<details><summary>📋 Per-paper Extractions (click to expand)</summary>\n\n${C.analysisDoc}\n\n</details>\n\n---\n\n`;
+  const staticPrefixMd = `<details><summary>📋 Per-paper Extractions (click to expand)</summary>\n\n${C.analysisDoc}\n\n</details>\n\n---\n\n`;
   setChatInnerHTML(progressBubble, `<strong>🔬 Phase 4/4 — Synthesizing cross-paper analysis...</strong>`);
-  scrollToBottom();
 
   const modelBubble = addMessageBubble("model", "");
+  const bubbleDoc = modelBubble.ownerDocument || getRootDocument();
+  if (!bubbleDoc) throw new Error("No document for synthesis bubble");
+  modelBubble.textContent = "";
+  const prefixEl = bubbleDoc.createElement("div");
+  prefixEl.className = "rc-synth-prefix";
+  setChatInnerHTML(prefixEl, renderMd(staticPrefixMd));
+  const streamEl = bubbleDoc.createElement("div");
+  streamEl.className = "rc-synth-stream";
+  modelBubble.appendChild(prefixEl);
+  modelBubble.appendChild(streamEl);
 
+  let synthBody = "";
+  let lastSynthPaint = 0;
   try {
     for await (const chunk of callAIStream(settings, synthContents, undefined, signal)) {
-      fullMd += chunk;
-      setChatInnerHTML(modelBubble, renderMd(fullMd));
-      scrollToBottom();
+      synthBody += chunk;
+      const now = Date.now();
+      if (now - lastSynthPaint >= STREAMING_MD_UI_MS) {
+        lastSynthPaint = now;
+        setChatInnerHTML(streamEl, renderMd(synthBody));
+      }
     }
   } catch (synthErr: any) {
     if (synthErr?.name === "AbortError") throw synthErr;
-    fullMd += `\n\n---\n\n⚠️ Synthesis interrupted: ${synthErr?.message || synthErr}\n\nThe per-paper extractions above are still available. You can ask a follow-up question to retry the synthesis.`;
-    setChatInnerHTML(modelBubble, renderMd(fullMd));
+    synthBody += `\n\n---\n\n⚠️ Synthesis interrupted: ${synthErr?.message || synthErr}\n\nThe per-paper extractions above are still available. You can ask a follow-up question to retry the synthesis.`;
   }
+  setChatInnerHTML(streamEl, renderMd(synthBody));
 
-  setChatInnerHTML(modelBubble, renderMd(fullMd));
+  const fullMd = staticPrefixMd + synthBody;
   C.chatHistory.push({ role: "model", text: fullMd });
 
   await saveAnalysisNote();
@@ -2230,7 +2248,6 @@ export async function handleFollowUp(
 
   if (ragInfo) {
     addMessageBubble("system", esc(ragInfo));
-    scrollToBottom();
   }
 
   let promptText: string;
@@ -2294,13 +2311,7 @@ ${MATH_FORMAT_INSTRUCTION}`;
     }
     contents.push({ role: "user", parts: userParts });
     const modelBubble = addMessageBubble("model", "");
-    let accum = "";
-    for await (const chunk of callAIStream(settings, contents, undefined, signal)) {
-      accum += chunk;
-      setChatInnerHTML(modelBubble, renderMd(accum));
-      scrollToBottom();
-    }
-    setChatInnerHTML(modelBubble, renderMd(accum));
+    const accum = await pumpStreamToMarkdownElement(modelBubble, callAIStream(settings, contents, undefined, signal));
     C.chatHistory.push({ role: "user", text: userPrompt });
     C.chatHistory.push({ role: "model", text: accum });
     await saveAnalysisNote();
@@ -2322,7 +2333,6 @@ ${MATH_FORMAT_INSTRUCTION}`;
     }
     html += currentToolHtml;
     setChatInnerHTML(toolBubble, html);
-    scrollToBottom();
   }
 
   let finalText: string;
@@ -2409,7 +2419,6 @@ ${MATH_FORMAT_INSTRUCTION}`;
 
   const modelBubble = addMessageBubble("model", "");
   setChatInnerHTML(modelBubble, renderMd(finalText));
-  scrollToBottom();
 
   C.chatHistory.push({ role: "user", text: userPrompt });
   C.chatHistory.push({ role: "model", text: finalText });
@@ -2705,8 +2714,6 @@ async function restoreSession(session: SessionData) {
     }
   }
 
-  scrollToBottom(true);
-
   for (const p of C.papers) {
     try {
       if (await hasRagIndex(p.id)) {
@@ -2803,6 +2810,126 @@ async function showLoadSessionPicker() {
   dom.body.appendChild(overlay);
 }
 
+// ---------- Paper list: open item + copy sync-stable links ----------
+
+let paperContextMenuEl: HTMLElement | null = null;
+let paperContextMenuCleanup: (() => void) | null = null;
+
+function removePaperContextMenu() {
+  paperContextMenuCleanup?.();
+  paperContextMenuCleanup = null;
+  if (paperContextMenuEl?.parentNode) {
+    paperContextMenuEl.parentNode.removeChild(paperContextMenuEl);
+  }
+  paperContextMenuEl = null;
+}
+
+/** zotero:// URL uses library ID + item key — stable across sync (unlike local itemID in notes). */
+function getZoteroSelectUrlForItemId(itemId: number): string | null {
+  try {
+    const it = Zotero.Items.get(itemId) as Zotero.Item | false;
+    if (!it || (it as any).deleted) return null;
+    const lib = it.libraryID;
+    const key = it.key;
+    if (lib == null || !key) return null;
+    return `zotero://select/items/${lib}_${key}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Same identifier as in zotero:// links, without scheme — useful for documentation or apps that resolve keys. */
+function getLibraryKeyHashForItemId(itemId: number): string | null {
+  try {
+    const it = Zotero.Items.get(itemId) as Zotero.Item | false;
+    if (!it || (it as any).deleted) return null;
+    const lib = it.libraryID;
+    const key = it.key;
+    if (lib == null || !key) return null;
+    return `${lib}_${key}`;
+  } catch {
+    return null;
+  }
+}
+
+function copyTextToClipboard(text: string): boolean {
+  try {
+    const Cc = (globalThis as any).Cc;
+    const Ci = (globalThis as any).Ci;
+    if (Cc && Ci) {
+      Cc["@mozilla.org/widget/clipboardhelper;1"].getService(Ci.nsIClipboardHelper).copyString(text);
+      return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+function showPaperContextMenu(doc: Document, ev: MouseEvent, itemId: number) {
+  ev.preventDefault();
+  removePaperContextMenu();
+  const url = getZoteroSelectUrlForItemId(itemId);
+  const hash = getLibraryKeyHashForItemId(itemId);
+  if (!url || !hash) {
+    addMessageBubble("system", "Could not resolve this item — it may be deleted or not available in this library.");
+    return;
+  }
+
+  const wrap = doc.createElement("div");
+  wrap.className = "paper-context-menu";
+  paperContextMenuEl = wrap;
+
+  const addItem = (label: string, payload: string) => {
+    const b = doc.createElement("button");
+    b.type = "button";
+    b.className = "paper-context-menu-item";
+    b.textContent = label;
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (copyTextToClipboard(payload)) {
+        addMessageBubble("system", "Copied.");
+      } else {
+        addMessageBubble("system", "Could not copy — try again or copy manually.");
+      }
+      removePaperContextMenu();
+    });
+    wrap.appendChild(b);
+  };
+
+  addItem("Copy Zotero app link", url);
+  addItem("Copy library key (LIB_KEY)", hash);
+
+  const vw = doc.defaultView?.innerWidth || 600;
+  const vh = doc.defaultView?.innerHeight || 400;
+  wrap.style.left = `${Math.max(8, Math.min(ev.clientX, vw - 236))}px`;
+  wrap.style.top = `${Math.max(8, Math.min(ev.clientY, vh - 100))}px`;
+  doc.body.appendChild(wrap);
+
+  const onDoc = (e: MouseEvent) => {
+    if (paperContextMenuEl && !paperContextMenuEl.contains(e.target as Node)) {
+      removePaperContextMenu();
+    }
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") removePaperContextMenu();
+  };
+  setTimeout(() => doc.addEventListener("click", onDoc, true), 0);
+  doc.addEventListener("keydown", onKey, true);
+  paperContextMenuCleanup = () => {
+    doc.removeEventListener("click", onDoc, true);
+    doc.removeEventListener("keydown", onKey, true);
+  };
+}
+
 function renderPaperList() {
   const list = $("paper-check-list");
   const listDoc = list.ownerDocument || getRootDocument();
@@ -2815,10 +2942,11 @@ function renderPaperList() {
       const item = listDoc.createElement("div");
       item.className = "paper-check-item";
       item.setAttribute("data-paper-id", String(p.id));
-      item.title = `${p.title}\n(Double-click to locate in Zotero)`;
+      item.title = `${p.title}\n\nDouble-click: show in Zotero library\nRight-click: copy link (works across synced devices)`;
       item.style.cursor = "pointer";
       setChatInnerHTML(item, `<span class="paper-check-label">${i + 1}. ${esc(p.title)}</span><span class="rag-status-dot" data-rag-id="${p.id}"></span>`);
       item.addEventListener("dblclick", () => {
+        removePaperContextMenu();
         try {
           const win = (getGlobalRoot() as any);
           const mainWin = win?.opener || win;
@@ -2828,9 +2956,14 @@ function renderPaperList() {
             if (zItem) {
               zp.selectItem(zItem.id);
               mainWin.focus?.();
+            } else {
+              addMessageBubble("system", "This item is no longer in the library (it may have been removed).");
             }
           }
         } catch (_) { /* ignore */ }
+      });
+      item.addEventListener("contextmenu", (ev) => {
+        showPaperContextMenu(listDoc, ev as MouseEvent, p.id);
       });
       list.appendChild(item);
     });

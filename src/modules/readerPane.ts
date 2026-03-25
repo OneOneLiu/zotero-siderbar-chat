@@ -1178,12 +1178,6 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
     wrapper.appendChild(inputArea);
     body.appendChild(wrapper);
 
-    let _userScrolledUp = false;
-    messageList.addEventListener("scroll", () => {
-      const gap = messageList.scrollHeight - messageList.scrollTop - messageList.clientHeight;
-      _userScrolledUp = gap > 80;
-    });
-
     const renderMessages = (forceScroll = false) => {
       const prevScrollTop = messageList.scrollTop;
       messageList.innerHTML = "";
@@ -1263,10 +1257,11 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
         messageList.appendChild(loadingBubble);
       }
 
-      if (forceScroll || !_userScrolledUp) {
+      const maxScroll = Math.max(0, messageList.scrollHeight - messageList.clientHeight);
+      if (forceScroll) {
         messageList.scrollTop = messageList.scrollHeight;
       } else {
-        messageList.scrollTop = prevScrollTop;
+        messageList.scrollTop = Math.max(0, Math.min(maxScroll, prevScrollTop));
       }
     };
 
@@ -1457,8 +1452,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
         input.value = "";
         input.style.height = "auto";
       }
-      _userScrolledUp = false;
-      renderMessages(true);
+      renderMessages();
 
       const settings = getSettings();
       if (!settings.apiKey) {
@@ -1467,7 +1461,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
           text: `Missing API key. Set it in Preferences → ${config.uiName}.`,
           at: Date.now(),
         });
-        renderMessages(true);
+        renderMessages();
         return;
       }
 
@@ -1481,7 +1475,7 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
         at: startTime,
         meta: { duration: 0 }
       });
-      renderMessages(true);
+      renderMessages();
 
       try {
         const history = addon.getSession(itemKey);

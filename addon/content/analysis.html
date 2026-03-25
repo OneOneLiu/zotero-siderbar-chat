@@ -26,10 +26,17 @@
       overflow: hidden;
     }
     .sidebar-header {
-      padding: 16px;
+      padding: 16px 16px 8px;
       font-size: 14px;
       font-weight: 700;
       color: #1d1d1f;
+      border-bottom: none;
+    }
+    .sidebar-paper-hint {
+      padding: 0 16px 12px;
+      font-size: 10px;
+      color: #86868b;
+      line-height: 1.35;
       border-bottom: 1px solid #e5e5e5;
     }
     .paper-check-list {
@@ -59,7 +66,32 @@
       font-size: 12px;
       line-height: 1.4;
       word-break: break-word;
+      flex: 1;
+      min-width: 0;
     }
+    .paper-context-menu {
+      position: fixed;
+      z-index: 100000;
+      background: #fff;
+      border: 1px solid #e5e5e5;
+      border-radius: 10px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+      padding: 4px 0;
+      min-width: 220px;
+    }
+    .paper-context-menu-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 8px 14px;
+      border: none;
+      background: transparent;
+      font-size: 12px;
+      color: #1d1d1f;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .paper-context-menu-item:hover { background: #f5f5f7; }
     .sidebar-hint {
       padding: 10px 12px;
       font-size: 11px;
@@ -295,6 +327,7 @@
 <body>
   <div class="sidebar">
     <div class="sidebar-header">📊 Context Papers</div>
+    <div class="sidebar-paper-hint">Double-click to open in library · Right-click to copy link</div>
     <div id="paper-check-list" class="paper-check-list"></div>
     <div class="sidebar-actions">
       <button id="btn-load-session" class="sidebar-btn" title="Load a previous analysis session from a saved note">📂 Load Session</button>
