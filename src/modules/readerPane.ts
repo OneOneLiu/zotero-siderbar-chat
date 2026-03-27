@@ -24,6 +24,15 @@ import {
 } from "./ragIndex";
 import { searchChunksBalanced } from "./ragSearch";
 import { copyMarkdownToClipboard, initMathCopyListener, normalizeMarkdownForExport } from "./multiPaperChatCore";
+import {
+  compactDialogMessagesForRequest,
+  sliceRecentDialogMessages,
+  estimateTokens,
+  estimateDialogMessagesTokens,
+  estimateUserPartsArrayTokens,
+  COMPACTION_SUMMARY_MARKER,
+  type DialogMessage,
+} from "../utils/contextCompaction";
 
 Zotero.debug("[GeminiChat] Loading readerPane module...");
 
@@ -1548,10 +1557,78 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
           `[GeminiChat] Sidebar send: key=${itemKey} chips=${contextItems.length} pdfs=${allContextFiles.length} firstFull=${isFirstUserQuestion} parts=${contextParts.length}`,
         );
 
-        const contents = history.slice(0, -1).map((msg, index) => {
-          const parts: any[] = [{ text: msg.text }];
-          return { role: msg.role, parts: parts };
-        });
+        const paperTitles = allContextFiles.map(
+          (pdf) =>
+            pdf.getField("title") ||
+            (pdf.parentItem && pdf.parentItem.getField("title")) ||
+            "Untitled",
+        );
+        const toolBlock = buildSidebarToolContextPrompt(paperTitles);
+
+        const head = history.slice(0, -1).filter((m) => m.role === "system");
+        const dialogRaw: DialogMessage[] = history
+          .slice(0, -1)
+          .filter((m) => m.role === "user" || m.role === "model")
+          .map((m) => ({ role: m.role as "user" | "model", text: m.text }));
+
+        const extraPromptTokens =
+          estimateTokens(toolBlock) +
+          estimateUserPartsArrayTokens(contextParts) +
+          estimateTokens(text);
+
+        let compactedDialog = dialogRaw;
+        try {
+          compactedDialog = await compactDialogMessagesForRequest(dialogRaw, {
+            recentTurns: settings.contextRecentTurns,
+            maxPromptTokens: settings.contextMaxPromptTokens,
+            extraPromptTokens,
+            getCache: () => addon.data.compactionCache[itemKey],
+            setCache: (summary, sourceHash) => {
+              addon.data.compactionCache[itemKey] = { summary, sourceHash };
+            },
+            summarizeConversation: async (transcript) => {
+              const sumContents = [{ role: "user" as const, parts: [{ text: transcript }] }];
+              return callAINonStream(settings, sumContents, settings.model);
+            },
+            logDebug: (m) => Zotero.debug(m),
+          });
+        } catch (e) {
+          Zotero.debug(`[GeminiChat] Context compaction failed, falling back to recent turns only: ${e}`);
+          // Fallback: keep only recent turns (don't send full uncompressed history)
+          const { recent } = sliceRecentDialogMessages(dialogRaw, settings.contextRecentTurns);
+          compactedDialog = recent;
+        }
+
+        // ── Debug: show compaction status in chat ──
+        {
+          const rawMsgCount = dialogRaw.length;
+          const rawTokens = estimateDialogMessagesTokens(dialogRaw);
+          const compactedMsgCount = compactedDialog.length;
+          const compactedTokens = estimateDialogMessagesTokens(compactedDialog);
+          const histBudget = Math.max(0, settings.contextMaxPromptTokens - extraPromptTokens);
+          const didCompact = compactedMsgCount < rawMsgCount;
+          const hasSummary = compactedDialog.length > 0 && compactedDialog[0].text.includes(COMPACTION_SUMMARY_MARKER);
+
+          let debugText = `📊 Context compaction debug:\n`;
+          debugText += `  maxPromptTokens=${settings.contextMaxPromptTokens}, recentTurns=${settings.contextRecentTurns}\n`;
+          debugText += `  extraTokens=${extraPromptTokens} (tools=${estimateTokens(toolBlock)}, context=${estimateUserPartsArrayTokens(contextParts)}, question=${estimateTokens(text)})\n`;
+          debugText += `  historyBudget=${histBudget} (= maxPrompt ${settings.contextMaxPromptTokens} − extra ${extraPromptTokens})\n`;
+          debugText += `  rawHistory: ${rawMsgCount} msgs, ≈${rawTokens} tokens\n`;
+          debugText += `  trigger: rawTokens(${rawTokens}) ${rawTokens > histBudget ? '>' : '≤'} budget(${histBudget}) → ${rawTokens > histBudget ? 'COMPACTION TRIGGERED' : 'no compaction needed'}\n`;
+          if (didCompact) {
+            debugText += `  result: ${rawMsgCount} msgs → ${compactedMsgCount} msgs (≈${compactedTokens} tokens)\n`;
+            debugText += `  hasSummary: ${hasSummary ? 'YES (older turns summarized)' : 'NO (summary failed, recent turns only)'}\n`;
+          } else {
+            debugText += `  result: no change (all ${rawMsgCount} msgs kept)\n`;
+          }
+
+          Zotero.debug(`[GeminiChat] ${debugText}`);
+        }
+
+        const contents: any[] = [
+          ...head.map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
+          ...compactedDialog.map((msg) => ({ role: msg.role, parts: [{ text: msg.text }] })),
+        ];
 
         // Last user turn: tool descriptions (same prefs as analysis window) + PDF/context parts + question.
         // No 4-phase pipeline — plain multimodal/text request like the reader always did.
@@ -1564,13 +1641,6 @@ function renderChat(body: HTMLElement, item: Zotero.Item, addon: Addon) {
             }
           }
           if (lastUserMsg) {
-            const paperTitles = allContextFiles.map(
-              (pdf) =>
-                pdf.getField("title") ||
-                (pdf.parentItem && pdf.parentItem.getField("title")) ||
-                "Untitled",
-            );
-            const toolBlock = buildSidebarToolContextPrompt(paperTitles);
             if (contextParts.length > 0) {
               lastUserMsg.parts.unshift(...contextParts);
             }

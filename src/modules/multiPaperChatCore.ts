@@ -17,6 +17,15 @@ import {
 import { searchChunksBalanced } from "./ragSearch";
 import type { ChatContext, PaperInfo, ChatMsg } from "./chatContext";
 import { createEmptyChatContext } from "./chatContext";
+import {
+  compactDialogMessagesForRequest,
+  sliceRecentDialogMessages,
+  estimateTokens,
+  estimateDialogMessagesTokens,
+  estimateUserPartsArrayTokens,
+  COMPACTION_SUMMARY_MARKER,
+  type DialogMessage,
+} from "../utils/contextCompaction";
 
 export type { PaperInfo, ChatMsg, ChatContext } from "./chatContext";
 export { createEmptyChatContext } from "./chatContext";
@@ -342,6 +351,11 @@ export function getFullAnalysisSettings() {
         return raw ? (JSON.parse(raw) as UserPreference[]) : [];
       } catch { return []; }
     })(),
+    contextMaxPromptTokens: Math.max(
+      500,
+      Math.min(2_000_000, parseInt((Z.Prefs.get(`${pfx}.contextMaxPromptTokens`, true) as string) || "90000", 10) || 90000),
+    ),
+    contextRecentTurns: Math.max(1, Math.min(64, parseInt((Z.Prefs.get(`${pfx}.contextRecentTurns`, true) as string) || "8", 10) || 8)),
   };
 }
 
@@ -2387,6 +2401,38 @@ function cleanToolLeakage(text: string): string {
 
 // ---------- Follow-up message ----------
 
+async function compactHistoryForAnalysisFollowUp(
+  chatMsgs: DialogMessage[],
+  settings: ReturnType<typeof getFullAnalysisSettings>,
+  userParts: any[],
+  signal?: AbortSignal,
+): Promise<DialogMessage[]> {
+  const extraPromptTokens = estimateUserPartsArrayTokens(userParts);
+  const dbg = (m: string) => {
+    try { (Zotero || getZotero())?.debug?.(m); } catch { /* ignore */ }
+  };
+  try {
+    return await compactDialogMessagesForRequest(chatMsgs, {
+      recentTurns: settings.contextRecentTurns,
+      maxPromptTokens: settings.contextMaxPromptTokens,
+      extraPromptTokens,
+      getCache: () => C.compactionCache,
+      setCache: (summary, sourceHash) => {
+        C.compactionCache = { summary, sourceHash };
+      },
+      summarizeConversation: async (transcript) => {
+        const contents = [{ role: "user" as const, parts: [{ text: transcript }] }];
+        return callAI(settings, contents, settings.extractionModel, signal);
+      },
+      logDebug: dbg,
+    });
+  } catch (e) {
+    dbg(`[ResearchCopilot] compactHistoryForAnalysisFollowUp failed, falling back to recent turns: ${e}`);
+    const { recent } = sliceRecentDialogMessages(chatMsgs, settings.contextRecentTurns);
+    return recent;
+  }
+}
+
 export async function handleFollowUp(
   userPrompt: string,
   settings: ReturnType<typeof getFullAnalysisSettings>,
@@ -2436,10 +2482,6 @@ ${MATH_FORMAT_INSTRUCTION}`;
 
   const userParts: any[] = [...contextParts, { text: promptText }];
 
-  const chatMsgs = C.chatHistory
-    .filter(m => m.role === "user" || m.role === "model")
-    .map(m => ({ role: m.role, text: m.text }));
-
   const allTools = getToolDefs();
   const prefTools = getPreferenceToolDefs(settings);
   const tools = [
@@ -2451,9 +2493,42 @@ ${MATH_FORMAT_INSTRUCTION}`;
     userParts.unshift({ text: buildToolContextPrompt(tools, settings) });
   }
 
+  const dialogForApi: DialogMessage[] = C.chatHistory
+    .filter(m => m.role === "user" || m.role === "model")
+    .map(m => ({ role: m.role as "user" | "model", text: m.text }));
+  const chatMsgs = await compactHistoryForAnalysisFollowUp(dialogForApi, settings, userParts, signal);
+
+  // ── Debug: show compaction status in chat ──
+  {
+    const rawMsgCount = dialogForApi.length;
+    const rawTokens = estimateDialogMessagesTokens(dialogForApi);
+    const compactedMsgCount = chatMsgs.length;
+    const compactedTokens = estimateDialogMessagesTokens(chatMsgs);
+    const extraTk = estimateUserPartsArrayTokens(userParts);
+    const histBudget = Math.max(0, settings.contextMaxPromptTokens - extraTk);
+    const didCompact = compactedMsgCount < rawMsgCount;
+    const hasSummary = chatMsgs.length > 0 && chatMsgs[0].text.includes(COMPACTION_SUMMARY_MARKER);
+
+    let debugText = `📊 Context compaction debug:\n`;
+    debugText += `  maxPromptTokens=${settings.contextMaxPromptTokens}, recentTurns=${settings.contextRecentTurns}\n`;
+    debugText += `  extraTokens≈${extraTk} (userParts including tools+RAG+question)\n`;
+    debugText += `  historyBudget=${histBudget} (= maxPrompt ${settings.contextMaxPromptTokens} − extra ${extraTk})\n`;
+    debugText += `  rawHistory: ${rawMsgCount} msgs, ≈${rawTokens} tokens\n`;
+    debugText += `  trigger: rawTokens(${rawTokens}) ${rawTokens > histBudget ? '>' : '≤'} budget(${histBudget}) → ${rawTokens > histBudget ? 'COMPACTION TRIGGERED' : 'no compaction needed'}\n`;
+    if (didCompact) {
+      debugText += `  result: ${rawMsgCount} msgs → ${compactedMsgCount} msgs (≈${compactedTokens} tokens)\n`;
+      debugText += `  hasSummary: ${hasSummary ? 'YES (older turns summarized)' : 'NO (summary failed, recent turns only)'}\n`;
+    } else {
+      debugText += `  result: no change (all ${rawMsgCount} msgs kept)\n`;
+    }
+
+    try { (Zotero || getZotero())?.debug?.(`[ResearchCopilot] ${debugText}`); } catch {}
+    addMessageBubble("system", esc(debugText));
+  }
+
   if (tools.length === 0) {
     const contents: any[] = [];
-    for (const msg of C.chatHistory) {
+    for (const msg of chatMsgs) {
       if (msg.role === "user") contents.push({ role: "user", parts: [{ text: msg.text }] });
       else if (msg.role === "model") contents.push({ role: "model", parts: [{ text: msg.text }] });
     }

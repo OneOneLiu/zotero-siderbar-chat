@@ -22,6 +22,8 @@ export interface ChatContext {
   standaloneMode: boolean;
   standaloneCollectionInfo: { id?: number; name?: string };
   sessionCreatedAt: string;
+  /** Rolling summary cache for context compaction (analysis session). */
+  compactionCache?: { summary: string; sourceHash: string };
 }
 
 export function createEmptyChatContext(): ChatContext {

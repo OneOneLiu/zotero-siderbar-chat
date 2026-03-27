@@ -271,6 +271,8 @@ function initForm(Zotero: any) {
   const modelInput = $input("model-input") as HTMLInputElement;
   const apiKey = $input("api-key") as HTMLInputElement;
   const chatHeight = $input("chat-height") as HTMLInputElement;
+  const contextMaxTokens = $input("context-max-tokens") as HTMLInputElement;
+  const contextRecentTurns = $input("context-recent-turns") as HTMLInputElement;
 
   PROVIDERS.forEach(p => {
     const opt = document.createElement("option");
@@ -399,9 +401,13 @@ function initForm(Zotero: any) {
 
   apiKey.value = load("apiKey");
   chatHeight.value = load("chatHeight", "500");
+  contextMaxTokens.value = load("contextMaxPromptTokens", "90000");
+  contextRecentTurns.value = load("contextRecentTurns", "8");
   apiBase.addEventListener("change", () => save("apiBase", apiBase.value.trim()));
   apiKey.addEventListener("change", () => save("apiKey", apiKey.value.trim()));
   chatHeight.addEventListener("change", () => save("chatHeight", chatHeight.value.trim()));
+  contextMaxTokens.addEventListener("change", () => save("contextMaxPromptTokens", contextMaxTokens.value.trim()));
+  contextRecentTurns.addEventListener("change", () => save("contextRecentTurns", contextRecentTurns.value.trim()));
 
   // ---- Test connection ----
   const testBtn = $("test-btn") as HTMLButtonElement;

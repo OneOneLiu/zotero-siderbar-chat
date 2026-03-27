@@ -471,6 +471,23 @@
       </div>
     </div>
 
+    <div class="section">
+      <div class="section-title">Conversation context</div>
+      <div class="hint" style="margin-top:-8px;margin-bottom:10px;">
+        When the estimated prompt would exceed the budget, older turns are summarized once; the last N full rounds stay verbatim. Applies to reader sidebar and multi-paper follow-up chat.
+      </div>
+      <div class="field">
+        <label for="context-max-tokens">Max prompt tokens (estimate)</label>
+        <input id="context-max-tokens" type="number" placeholder="90000" style="width:140px;" min="500" max="2000000" step="100" />
+        <div class="hint">Rough budget for a single request (history + RAG + tools + reply reserve). Lower if you hit 400 / context errors.</div>
+      </div>
+      <div class="field">
+        <label for="context-recent-turns">Recent turns kept in full</label>
+        <input id="context-recent-turns" type="number" placeholder="8" style="width:100px;" min="1" max="64" />
+        <div class="hint">Number of user–assistant rounds kept as full text; older dialogue is compressed into a summary.</div>
+      </div>
+    </div>
+
   </div>
 
   <!-- ========== Tab 2: Quick Prompts ========== -->

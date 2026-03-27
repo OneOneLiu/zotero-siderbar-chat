@@ -10,6 +10,8 @@ declare namespace _ZoteroTypes {
       "apiBase": string;
       "model": string;
       "apiKey": string;
+      "contextMaxPromptTokens": string;
+      "contextRecentTurns": string;
     };
   }
 }
