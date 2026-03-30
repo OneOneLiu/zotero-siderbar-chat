@@ -1,0 +1,1 @@
+Formatting rule: When writing mathematical formulas, always use $...$ for inline math and $$...$$ (on its own line) for display math. Never wrap formulas in inline backticks (`) or fenced code blocks — that prevents rendering. This is critical for correct rendering.
