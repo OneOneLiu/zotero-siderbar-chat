@@ -119,6 +119,15 @@
     }
     .sidebar-btn:hover { background: #f0f5ff; }
     .sidebar-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .sidebar-copy-row {
+      padding: 8px 8px 0;
+      border-top: 1px solid #e5e5e5;
+      flex-shrink: 0;
+    }
+    .sidebar-btn-block {
+      width: 100%;
+      flex: none;
+    }
 
     /* --- Main chat area --- */
     .main {
@@ -355,6 +364,9 @@
     <div class="sidebar-header">📊 Context Papers</div>
     <div class="sidebar-paper-hint">Double-click to open in library · Right-click to copy link</div>
     <div id="paper-check-list" class="paper-check-list"></div>
+    <div class="sidebar-copy-row">
+      <button type="button" id="btn-copy-paper-sources" class="sidebar-btn sidebar-btn-block" title="Copy numbered titles and Zotero links (markdown) for use in other apps" disabled>📋 Copy paper sources</button>
+    </div>
     <div class="sidebar-actions">
       <button id="btn-load-session" class="sidebar-btn" title="Load a previous analysis session from a saved note">📂 Load Session</button>
       <button id="btn-save-session" class="sidebar-btn" title="Save current session to note">💾 Save</button>

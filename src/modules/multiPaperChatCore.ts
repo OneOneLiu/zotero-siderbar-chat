@@ -2982,6 +2982,36 @@ function copyTextToClipboard(text: string): boolean {
   return false;
 }
 
+function sanitizePaperTitleForCopyLine(title: string): string {
+  return title.replace(/\r?\n/g, " ").trim() || "Untitled";
+}
+
+/** One line per paper: `[n] title, [source](zotero://...)` for mapping indices to items in external apps. */
+function buildContextPapersSourceCopyText(): string {
+  return C.papers
+    .map((p, i) => {
+      const n = i + 1;
+      const title = sanitizePaperTitleForCopyLine(p.title || "");
+      const url = getZoteroSelectUrlForItemId(p.id);
+      const href = url || "#";
+      return `[${n}] ${title}, [source](${href})`;
+    })
+    .join("\n");
+}
+
+function onCopyContextPapersSources() {
+  if (C.papers.length === 0) {
+    addMessageBubble("system", "No papers loaded.");
+    return;
+  }
+  const text = buildContextPapersSourceCopyText();
+  if (copyTextToClipboard(text)) {
+    addMessageBubble("system", `Copied ${C.papers.length} paper(s) (numbered titles + Zotero links).`);
+  } else {
+    addMessageBubble("system", "Could not copy — try again.");
+  }
+}
+
 function showPaperContextMenu(doc: Document, ev: MouseEvent, itemId: number) {
   ev.preventDefault();
   removePaperContextMenu();
@@ -3077,6 +3107,8 @@ function renderPaperList() {
     });
   }
   updateRagStatusIndicators();
+  const copyBtn = getRootDocument()?.getElementById("btn-copy-paper-sources") as HTMLButtonElement | null;
+  if (copyBtn) copyBtn.disabled = C.papers.length === 0;
 }
 
 async function init() {
@@ -3108,6 +3140,9 @@ async function init() {
     await saveAnalysisNote();
     addMessageBubble("system", `💾 Session saved${C.savedNoteId ? ` (Note ID: ${C.savedNoteId})` : ""}.`);
   });
+
+  const copySourcesBtn = rootDoc?.getElementById("btn-copy-paper-sources");
+  if (copySourcesBtn) copySourcesBtn.addEventListener("click", () => onCopyContextPapersSources());
 
   // Rerun analysis toggle hint
   const rerunToggle = rootDoc?.getElementById("rerun-analysis-toggle") as HTMLInputElement | null;
