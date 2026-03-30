@@ -1053,9 +1053,22 @@ function normalizeAtxHeadingSpace(src: string): string {
   return src.replace(/^(\s{0,3})(#{1,6})([^\s#\r\n])/gm, "$1$2 $3");
 }
 
+/**
+ * CommonMark bullet lists require a space/tab after `-`; models often emit `-中文` or fullwidth hyphens (`－`).
+ * Without it, markdown-it renders a plain `<p>` and the hyphen stays visible. Also fixes `> -item` in blockquotes.
+ */
+function normalizeMarkdownBulletMarkers(src: string): string {
+  return src
+    .replace(/^(\s{0,3}(?:> ?)+)([\u2212\uFF0D\u2010])(?=\S)/gm, "$1- ")
+    .replace(/^(\s{0,3}(?:> ?)+)(-)(?=[^\s\r\n-])/gm, "$1$2 ")
+    .replace(/^(\s{0,3})[\u2212\uFF0D\u2010](?=\S)/gm, "$1- ")
+    .replace(/^(\s{0,3})(-)(?=[^\s\r\n-])/gm, "$1$2 ");
+}
+
 function normalizeMathDelimiters(src: string): string {
   src = normalizeMarkdownBoldMarkers(src);
   src = normalizeAtxHeadingSpace(src);
+  src = normalizeMarkdownBulletMarkers(src);
   // Fullwidth grave (some fonts / paste sources look like a backtick but won’t match `).
   src = src.replace(/\uFF40/g, "`");
   // Models often wrap `$...$` or `$$...$$` in backticks; Markdown then renders <code>, not KaTeX.
