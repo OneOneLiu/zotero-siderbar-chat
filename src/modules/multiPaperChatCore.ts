@@ -1065,10 +1065,24 @@ function normalizeMarkdownBulletMarkers(src: string): string {
     .replace(/^(\s{0,3})(-)(?=[^\s\r\n-])/gm, "$1$2 ");
 }
 
+/**
+ * markdown-it-texmath inline `$...$` regex requires no leading/trailing whitespace next to the `$` delimiters.
+ * Otherwise the parser leaves raw `$` in the paragraph (KaTeX never runs). We fix common model mistakes:
+ * - `$ \\pi` → `$\pi` (space after opening `$`)
+ * - `\\mathcal{A} $` → `\\mathcal{A}$` (space before closing `$`), but not `+ $` (next formula on same line).
+ */
+function normalizeInlineMathWhitespace(src: string): string {
+  return src
+    .replace(/\$(?!\$)\s+(?=[^\s$])/g, "$")
+    .replace(/(?<=[}\])])\s+\$/g, "$")
+    .replace(/(\\[a-zA-Z]+(?:\{[^}]*\})*)\s+\$/g, "$1$");
+}
+
 function normalizeMathDelimiters(src: string): string {
   src = normalizeMarkdownBoldMarkers(src);
   src = normalizeAtxHeadingSpace(src);
   src = normalizeMarkdownBulletMarkers(src);
+  src = normalizeInlineMathWhitespace(src);
   // Fullwidth grave (some fonts / paste sources look like a backtick but won’t match `).
   src = src.replace(/\uFF40/g, "`");
   // Models often wrap `$...$` or `$$...$$` in backticks; Markdown then renders <code>, not KaTeX.
