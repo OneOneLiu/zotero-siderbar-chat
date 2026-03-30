@@ -2540,6 +2540,151 @@ let busy = false;
 let rerunRequested = false;
 let analysisAbortController: AbortController | null = null;
 
+interface QueuedMessage { id: string; text: string; }
+const messageQueue: QueuedMessage[] = [];
+let queueIdSeq = 0;
+
+function renderMessageQueue() {
+  const doc = getRootDocument();
+  if (!doc) return;
+  const root = doc.getElementById("message-queue");
+  if (!root) return;
+  root.textContent = "";
+  if (messageQueue.length === 0) {
+    root.style.display = "none";
+    return;
+  }
+  root.style.display = "block";
+  for (const q of messageQueue) {
+    const row = doc.createElement("div");
+    row.className = "message-queue-item";
+    const preview = doc.createElement("span");
+    preview.className = "message-queue-text";
+    const raw = q.text.length > 120 ? `${q.text.slice(0, 120)}…` : q.text;
+    preview.textContent = raw.replace(/\n/g, " ");
+    const rm = doc.createElement("button");
+    rm.type = "button";
+    rm.className = "message-queue-remove";
+    rm.setAttribute("aria-label", "Remove from queue");
+    rm.title = "Remove from queue";
+    rm.textContent = "×";
+    rm.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const idx = messageQueue.findIndex(x => x.id === q.id);
+      if (idx >= 0) {
+        messageQueue.splice(idx, 1);
+        renderMessageQueue();
+      }
+    });
+    row.appendChild(preview);
+    row.appendChild(rm);
+    root.appendChild(row);
+  }
+}
+
+function enqueueCurrentInput(): boolean {
+  const input = $("chat-input") as HTMLTextAreaElement;
+  const text = input.value.trim();
+  if (!text) return false;
+  try {
+    ensureGlobals();
+    getFullAnalysisSettings();
+  } catch (e: any) {
+    addMessageBubble("system", `⚠️ ${esc(e?.message || String(e))}`);
+    return false;
+  }
+  const settings = getFullAnalysisSettings();
+  if (!settings.apiKey) {
+    addMessageBubble("system", "⚠️ Missing API key. Configure in Edit → Settings → Research Copilot.");
+    return false;
+  }
+  messageQueue.push({ id: `q${++queueIdSeq}`, text });
+  input.value = "";
+  input.style.height = "auto";
+  renderMessageQueue();
+  return true;
+}
+
+async function drainQueueIfNeeded(): Promise<void> {
+  if (busy) return;
+  const item = messageQueue.shift();
+  if (!item) {
+    renderMessageQueue();
+    return;
+  }
+  renderMessageQueue();
+  await runSendPipeline(item.text);
+}
+
+async function runSendPipeline(text: string): Promise<void> {
+  const btn = $("btn-send") as HTMLButtonElement;
+  const input = $("chat-input") as HTMLTextAreaElement;
+  busy = true;
+  analysisAbortController = createAbortController();
+  const { signal } = analysisAbortController;
+  btn.disabled = false;
+  btn.textContent = "Stop";
+  btn.classList.add("btn-send-stop");
+
+  try {
+    await processAnalysisUserMessage(text, signal);
+  } catch (e: any) {
+    if (e?.name === "AbortError") {
+      addMessageBubble("system", "Generation stopped.");
+    } else {
+      addMessageBubble("system", `❌ ${esc(e?.message || String(e))}`);
+    }
+  } finally {
+    busy = false;
+    analysisAbortController = null;
+    btn.classList.remove("btn-send-stop");
+    btn.disabled = false;
+    btn.textContent = "Send";
+    input.focus();
+    await drainQueueIfNeeded();
+  }
+}
+
+async function handleSendNormal() {
+  const input = $("chat-input") as HTMLTextAreaElement;
+  const text = input.value.trim();
+  if (!text) return;
+
+  try {
+    ensureGlobals();
+    getFullAnalysisSettings();
+  } catch (e: any) {
+    addMessageBubble("system", `⚠️ ${esc(e?.message || String(e))}`);
+    return;
+  }
+  const settings = getFullAnalysisSettings();
+  if (!settings.apiKey) {
+    addMessageBubble("system", "⚠️ Missing API key. Configure in Edit → Settings → Research Copilot.");
+    return;
+  }
+
+  input.value = "";
+  input.style.height = "auto";
+
+  await runSendPipeline(text);
+}
+
+function handleEnterSend() {
+  if (busy) {
+    enqueueCurrentInput();
+  } else {
+    void handleSendNormal();
+  }
+}
+
+function handleSendButtonClick() {
+  if (busy) {
+    analysisAbortController?.abort();
+    return;
+  }
+  void handleSendNormal();
+}
+
 /** Shared send pipeline (iframe + reader sidebar). */
 export async function processAnalysisUserMessage(userText: string, signal?: AbortSignal): Promise<void> {
   let settings: ReturnType<typeof getFullAnalysisSettings>;
@@ -2577,59 +2722,6 @@ export async function processAnalysisUserMessage(userText: string, signal?: Abor
     await runInitialAnalysis(userText, settings, false, signal);
   } else {
     await handleFollowUp(userText, settings, signal);
-  }
-}
-
-async function handleSend() {
-  if (busy) {
-    analysisAbortController?.abort();
-    return;
-  }
-  const input = $("chat-input") as HTMLTextAreaElement;
-  const text = input.value.trim();
-  if (!text) return;
-
-  try {
-    ensureGlobals();
-    getFullAnalysisSettings();
-  } catch (e: any) {
-    addMessageBubble("system", `⚠️ ${esc(e?.message || String(e))}`);
-    return;
-  }
-  const settings = getFullAnalysisSettings();
-  if (!settings.apiKey) {
-    addMessageBubble("system", "⚠️ Missing API key. Configure in Edit → Settings → Research Copilot.");
-    return;
-  }
-
-  input.value = "";
-  input.style.height = "auto";
-
-  const btn = $("btn-send") as HTMLButtonElement;
-  busy = true;
-  analysisAbortController = createAbortController();
-  const { signal } = analysisAbortController;
-  btn.disabled = false;
-  btn.textContent = "Stop";
-  btn.classList.add("btn-send-stop");
-  input.disabled = true;
-
-  try {
-    await processAnalysisUserMessage(text, signal);
-  } catch (e: any) {
-    if (e?.name === "AbortError") {
-      addMessageBubble("system", "Generation stopped.");
-    } else {
-      addMessageBubble("system", `❌ ${esc(e?.message || String(e))}`);
-    }
-  } finally {
-    busy = false;
-    analysisAbortController = null;
-    btn.classList.remove("btn-send-stop");
-    btn.disabled = false;
-    btn.textContent = "Send";
-    input.disabled = false;
-    input.focus();
   }
 }
 
@@ -2794,6 +2886,9 @@ async function parseSessionFromNote(noteHtml: string): Promise<SessionData | nul
 }
 
 async function restoreSession(session: SessionData) {
+  messageQueue.length = 0;
+  renderMessageQueue();
+  analysisAbortController?.abort();
   C.papers = session.papers || [];
   C.chatHistory = session.chatHistory || [];
   C.questionUnderstandingDoc = session.questionUnderstandingDoc || "";
@@ -3119,9 +3214,9 @@ async function init() {
   
   initMathCopyListener($("chat-messages"));
 
-  btn.addEventListener("click", handleSend);
+  btn.addEventListener("click", handleSendButtonClick);
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleEnterSend(); }
   });
   input.addEventListener("input", () => {
     input.style.height = "auto";
@@ -3219,6 +3314,7 @@ async function init() {
     }
   }
 
+  renderMessageQueue();
   input.focus();
 }
 

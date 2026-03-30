@@ -12,10 +12,10 @@
   "config": {
     "addonName": "Zotero Research Copilot",
     "uiName": "Research Copilot",
-    "addonID": "sidebar-chat@local",
-    "addonRef": "SidebarChat",
-    "addonInstance": "SidebarChat",
-    "prefsPrefix": "extensions.zotero.sidebarChat"
+    "addonID": "research-copilot@local",
+    "addonRef": "ResearchCopilot",
+    "addonInstance": "ResearchCopilot",
+    "prefsPrefix": "extensions.zotero.researchCopilot"
   },
   "main": "src/index.ts",
   "scripts": {

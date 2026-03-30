@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <title>AI Multi-paper Analysis</title>
-  <link rel="stylesheet" href="chrome://SidebarChat/content/style/katex.min.css" />
+  <link rel="stylesheet" href="chrome://ResearchCopilot/content/style/katex.min.css" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -357,6 +357,54 @@
       padding: 6px 10px;
       line-height: 1.5;
     }
+    .message-queue {
+      display: none;
+      margin-bottom: 8px;
+      max-height: 140px;
+      overflow-y: auto;
+      border: 1px solid #e5e5e5;
+      border-radius: 10px;
+      background: #fafafa;
+      padding: 4px 0;
+    }
+    .message-queue:not(:empty) {
+      display: block;
+    }
+    .message-queue-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+      line-height: 1.35;
+      border-bottom: 1px solid #eee;
+    }
+    .message-queue-item:last-child {
+      border-bottom: none;
+    }
+    .message-queue-text {
+      flex: 1;
+      min-width: 0;
+      color: #424245;
+      word-break: break-word;
+    }
+    .message-queue-remove {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: #86868b;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .message-queue-remove:hover {
+      background: #ffe5e5;
+      color: #c62828;
+    }
   </style>
 </head>
 <body>
@@ -376,6 +424,7 @@
   <div class="main">
     <div id="chat-messages" class="chat-messages"></div>
     <div class="input-area">
+      <div id="message-queue" class="message-queue" aria-label="Queued messages"></div>
       <div class="input-row">
         <textarea id="chat-input" class="chat-input" rows="1" placeholder="Ask a question about the selected papers..."></textarea>
         <button id="btn-send" class="btn-send">Send</button>
@@ -390,9 +439,9 @@
       <div class="rerun-hint-banner" id="rerun-hint-banner">
         <div class="rerun-hint-inner">🔄 Next message will trigger the full 4-step pipeline: Question Understanding → Per-paper Extraction → Synthesis. Previous chat context will be preserved.</div>
       </div>
-      <div class="input-hint">Enter to send · Shift+Enter for new line · First message triggers full analysis</div>
+      <div class="input-hint">Enter to send · While replying: Enter queues the next message (shown above) · Stop cancels the current reply · Shift+Enter for new line</div>
     </div>
   </div>
-  <script src="chrome://SidebarChat/content/scripts/analysis.js"></script>
+  <script src="chrome://ResearchCopilot/content/scripts/analysis.js"></script>
 </body>
 </html>

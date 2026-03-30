@@ -7,11 +7,11 @@
 declare namespace _ZoteroTypes {
   interface Prefs {
     PluginPrefsMap: {
-      "apiBase": string;
-      "model": string;
-      "apiKey": string;
-      "contextMaxPromptTokens": string;
-      "contextRecentTurns": string;
+      "extensions.zotero.sidebarChat.apiBase": string;
+      "extensions.zotero.sidebarChat.model": string;
+      "extensions.zotero.sidebarChat.apiKey": string;
+      "extensions.zotero.sidebarChat.contextMaxPromptTokens": string;
+      "extensions.zotero.sidebarChat.contextRecentTurns": string;
     };
   }
 }
