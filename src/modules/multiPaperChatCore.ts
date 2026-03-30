@@ -470,7 +470,27 @@ function buildHeaders(s: ReturnType<typeof getFullAnalysisSettings>) {
 const TIMEOUT_MS = 300000; // 5 minutes
 const MAX_RETRIES = 2;
 
+/** Extra attempts when fetch returns OK but body read / JSON.parse fails (e.g. Firefox: Content-Length exceeds body). */
+const CALL_AI_BODY_READ_RETRIES = 2;
+
 async function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+
+/** Transient failures while reading the HTTP response body or parsing JSON (truncated transfer). */
+function shouldRetryCallAiResponseError(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  if ((e as Error).name === "AbortError") return false;
+  if (e instanceof SyntaxError) return true;
+  const msg = String((e as Error).message || e);
+  return (
+    /Content-Length/i.test(msg) ||
+    /exceeds response Body/i.test(msg) ||
+    /unexpected end of json input/i.test(msg) ||
+    /network/i.test(msg) ||
+    /Failed to fetch/i.test(msg) ||
+    /Load failed/i.test(msg) ||
+    /NS_ERROR/i.test(msg)
+  );
+}
 
 /** Combines optional user cancel with per-request timeout; dispose() clears timers/listeners. */
 function mergeUserAndTimeout(user: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; dispose: () => void } {
@@ -526,7 +546,10 @@ async function fetchWithRetry(url: string, opts: RequestInit, retries = MAX_RETR
         }
         throw e;
       }
-      if (attempt < retries && /network/i.test(e?.message || "")) {
+      if (
+        attempt < retries &&
+        /network|Content-Length|exceeds response Body|Failed to fetch|Load failed|NS_ERROR/i.test(e?.message || "")
+      ) {
         await delay(Math.min(3000 * Math.pow(2, attempt), 20000));
         continue;
       }
@@ -542,27 +565,63 @@ async function callAI(
   modelOverride?: string,
   userSignal?: AbortSignal,
 ): Promise<string> {
-  const res = await fetchWithRetry(
-    buildEndpoint(s, false, modelOverride),
-    { method: "POST", headers: buildHeaders(s), body: JSON.stringify(formatPayload(s, contents, false, modelOverride)) },
-    MAX_RETRIES,
-    userSignal,
-  );
-  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
-  const j: any = await res.json();
-  if (s.provider === "gemini") {
-    if (j?.error?.message) throw new Error(`API Error: ${j.error.message}`);
-    const c = j?.candidates || j?.[0]?.candidates;
-    if (c?.[0]?.content?.parts?.[0]?.text !== undefined) return c[0].content.parts[0].text;
-    if (Array.isArray(j)) { let f = ""; for (const x of j) { const t = x?.candidates?.[0]?.content?.parts?.[0]?.text; if (t) f += t; } if (f) return f; }
-    throw new Error(`Unexpected Gemini response: ${JSON.stringify(j)}`);
+  const url = buildEndpoint(s, false, modelOverride);
+  const payload = formatPayload(s, contents, false, modelOverride);
+  const body = JSON.stringify(payload);
+
+  let lastErr: unknown;
+  for (let readAttempt = 0; readAttempt <= CALL_AI_BODY_READ_RETRIES; readAttempt++) {
+    try {
+      const res = await fetchWithRetry(
+        url,
+        { method: "POST", headers: buildHeaders(s), body },
+        MAX_RETRIES,
+        userSignal,
+      );
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        throw new Error(`${res.status}: ${errText}`);
+      }
+      const raw = await res.text();
+      const j: any = JSON.parse(raw);
+      if (s.provider === "gemini") {
+        if (j?.error?.message) throw new Error(`API Error: ${j.error.message}`);
+        const c = j?.candidates || j?.[0]?.candidates;
+        if (c?.[0]?.content?.parts?.[0]?.text !== undefined) return c[0].content.parts[0].text;
+        if (Array.isArray(j)) {
+          let f = "";
+          for (const x of j) {
+            const t = x?.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (t) f += t;
+          }
+          if (f) return f;
+        }
+        throw new Error(`Unexpected Gemini response: ${JSON.stringify(j)}`);
+      }
+
+      if (j?.error?.message) throw new Error(`API Error: ${j.error.message}`);
+      const content = j?.choices?.[0]?.message?.content;
+      if (typeof content === "string") return content;
+
+      throw new Error(`Unexpected response: ${JSON.stringify(j)}`);
+    } catch (e: unknown) {
+      lastErr = e;
+      if (e && typeof e === "object" && (e as Error).name === "AbortError") throw e;
+      if (readAttempt < CALL_AI_BODY_READ_RETRIES && shouldRetryCallAiResponseError(e)) {
+        try {
+          (Zotero || getZotero())?.debug?.(
+            `[ResearchCopilot] callAI response read/parse failed (attempt ${readAttempt + 1}/${CALL_AI_BODY_READ_RETRIES + 1}), retrying: ${e}`,
+          );
+        } catch {
+          /* ignore */
+        }
+        await delay(Math.min(3000 * Math.pow(2, readAttempt), 20000));
+        continue;
+      }
+      throw e;
+    }
   }
-  
-  if (j?.error?.message) throw new Error(`API Error: ${j.error.message}`);
-  const content = j?.choices?.[0]?.message?.content;
-  if (typeof content === "string") return content;
-  
-  throw new Error(`Unexpected response: ${JSON.stringify(j)}`);
+  throw lastErr;
 }
 
 async function* callAIStream(
@@ -772,6 +831,19 @@ function buildSessionJson(): string {
 }
 
 /**
+ * Zotero note export only: Phase-4 model messages embed full `analysisDoc` inside `<details>…</details>`
+ * for the in-app expandable UI. Strip that block when writing the note HTML so Chat History stays small;
+ * full text remains in Session JSON (`analysisDoc` + full `chatHistory`) and in the Research Copilot UI.
+ */
+function omitPerPaperExtractionsBlockForNote(md: string): string {
+  if (!md || !/<details/i.test(md) || !/Per-paper Extractions/i.test(md)) return md;
+  return md.replace(
+    /<details[^>]*>\s*<summary[^>]*>[\s\S]*?Per-paper Extractions[\s\S]*?<\/summary>[\s\S]*?<\/details>/gi,
+    "<details><summary>📋 Per-paper Extractions</summary>\n\n*(Full text omitted in this note — see Session Data .json attachment.)*\n\n</details>",
+  );
+}
+
+/**
  * One dataset per library titled "Research Copilot History". All session JSON attachments
  * are children of this item. Collection is only used when creating a new dataset (optional
  * placement); we never create a second dataset just because the canonical one lives elsewhere.
@@ -831,9 +903,11 @@ export async function saveAnalysisNote() {
       quHtml = `<h1>Question Understanding</h1>${renderMdForNote(C.questionUnderstandingDoc)}`;
     }
 
+    /** Full `analysisDoc` lives in the Session Data JSON attachment (see `buildSessionJson`) — do not embed here or the note becomes huge with many papers. */
     let extractionsHtml = "";
     if (C.analysisDoc) {
-      extractionsHtml = `<h1>Per-paper Extractions</h1>${renderMdForNote(C.analysisDoc)}`;
+      extractionsHtml = `<h1>Per-paper Extractions</h1>
+<p><em>Full text is stored in the <strong>Session Data (.json)</strong> attachment linked above — not in this note. Open this analysis in Research Copilot to see the same content in chat (expandable blocks).</em></p>`;
     }
 
     let chatHtml = "<h1>Chat History</h1>";
@@ -847,7 +921,7 @@ export async function saveAnalysisNote() {
         chatHtml += `<blockquote>${renderMd(msg.text)}</blockquote>`;
       } else if (msg.role === "model") {
         chatHtml += `<p><strong>🤖 Answer:</strong></p>`;
-        chatHtml += renderMd(msg.text);
+        chatHtml += renderMd(omitPerPaperExtractionsBlockForNote(msg.text));
         chatHtml += `<hr/>`;
       } else {
         chatHtml += `<p><em>ℹ️ ${esc(msg.text)}</em></p>`;
